@@ -45,7 +45,7 @@ export default function Login({ onLogin }: { onLogin: (user: User) => void }) {
 
   if (!selectedUser) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen p-6 max-w-md mx-auto">
+      <div className="flex flex-col items-center justify-center min-h-screen p-6 w-full max-w-[414px] mx-auto relative shadow-2xl bg-base-bg pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="text-center mb-12">
           <h1 className="text-4xl font-display text-base-text mb-2">Nosso Lar</h1>
           <p className="text-base-text/60">Quem está acessando?</p>
@@ -70,7 +70,7 @@ export default function Login({ onLogin }: { onLogin: (user: User) => void }) {
   }
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen p-6 max-w-sm mx-auto">
+    <div className="flex flex-col items-center justify-center min-h-screen p-6 w-full max-w-[414px] mx-auto relative shadow-2xl bg-base-bg pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
       <motion.button 
         initial={{ opacity: 0 }} animate={{ opacity: 1 }}
         className="mb-8 text-base-text/60 text-sm hover:underline"

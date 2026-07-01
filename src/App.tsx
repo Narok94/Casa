@@ -23,7 +23,7 @@ export default function App() {
   };
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center bg-base-bg">Carregando...</div>;
+    return <div className="min-h-screen flex items-center justify-center bg-base-bg w-full max-w-[414px] mx-auto relative shadow-2xl">Carregando...</div>;
   }
 
   return user ? <Dashboard user={user} onLogout={handleLogout} /> : <Login onLogin={setUser} />;

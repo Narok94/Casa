@@ -47,9 +47,14 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
   const completedThisWeek = completedTasks.length;
   const progressPercent = totalTasksThisWeek === 0 ? 0 : Math.round((completedThisWeek / totalTasksThisWeek) * 100);
 
+  const deleteTask = async (taskId: number) => {
+    await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' });
+    setRefreshKey(k => k + 1);
+  };
+
   return (
-    <div className="flex flex-col min-h-screen bg-base-bg pb-20">
-      <header className="p-6 pb-2 flex justify-between items-start">
+    <div className="flex flex-col min-h-screen bg-base-bg pb-[calc(80px+env(safe-area-inset-bottom))] w-full max-w-[414px] mx-auto relative shadow-2xl">
+      <header className="p-6 pb-2 flex justify-between items-start pt-[calc(1.5rem+env(safe-area-inset-top))]">
         <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}>
           <h1 className="text-2xl font-display font-medium">Olá, {user.name} 👋</h1>
           <p className="text-base-text/60 capitalize">{format(new Date(), "EEEE, d 'de' MMMM", { locale: ptBR })}</p>
@@ -85,7 +90,7 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
                 <div className="mb-4">
                   <span className="text-xs font-semibold text-red-500 uppercase tracking-wider mb-2 block">Atrasadas</span>
                   <div className="flex flex-col gap-3">
-                    {overdueTasks.map(t => <TaskCard key={t.id} task={t} onToggle={() => toggleTask(t)} />)}
+                    {overdueTasks.map(t => <TaskCard key={t.id} task={t} onToggle={() => toggleTask(t)} onDelete={() => deleteTask(t.id)} />)}
                   </div>
                 </div>
               )}
@@ -96,7 +101,7 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
                     <p className="text-base-text/60 font-medium">Tudo em dia por aqui! 🎉</p>
                   </div>
                 ) : (
-                  todayTasks.map(t => <TaskCard key={t.id} task={t} onToggle={() => toggleTask(t)} />)
+                  todayTasks.map(t => <TaskCard key={t.id} task={t} onToggle={() => toggleTask(t)} onDelete={() => deleteTask(t.id)} />)
                 )}
               </div>
             </section>
@@ -107,7 +112,7 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
         {view === 'tasks' && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col gap-4">
             <h2 className="text-lg font-display font-semibold mb-2">Todas as Pendências</h2>
-            {sortedPendingTasks.map(t => <TaskCard key={t.id} task={t} onToggle={() => toggleTask(t)} />)}
+            {sortedPendingTasks.map(t => <TaskCard key={t.id} task={t} onToggle={() => toggleTask(t)} onDelete={() => deleteTask(t.id)} />)}
             {sortedPendingTasks.length === 0 && (
               <p className="text-center text-base-text/50 mt-10">Nenhuma tarefa pendente.</p>
             )}
@@ -131,7 +136,7 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
 
             <div className="flex flex-col gap-3">
               {completedTasks.length > 0 ? (
-                completedTasks.map(t => <TaskCard key={t.id} task={t} onToggle={() => toggleTask(t)} />)
+                completedTasks.map(t => <TaskCard key={t.id} task={t} onToggle={() => toggleTask(t)} onDelete={() => deleteTask(t.id)} />)
               ) : (
                 <p className="text-center text-base-text/50 mt-4">Nenhuma tarefa concluída ainda.</p>
               )}
@@ -140,17 +145,25 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
         )}
       </main>
 
-      <nav className="fixed bottom-0 w-full bg-white/80 backdrop-blur-md border-t border-black/5 p-4 pb-safe flex justify-around items-center">
-        <NavButton icon={<Home />} label="Início" active={view === 'home'} onClick={() => setView('home')} />
-        <button 
-          onClick={() => setShowNewTask(true)}
-          className="bg-sage-green text-white p-4 rounded-full shadow-lg transform -translate-y-4 hover:scale-105 transition-transform"
-        >
-          <Plus size={24} />
-        </button>
-        <NavButton icon={<ListTodo />} label="Tarefas" active={view === 'tasks'} onClick={() => setView('tasks')} />
-        <NavButton icon={<HistoryIcon />} label="Histórico" active={view === 'history'} onClick={() => setView('history')} />
-      </nav>
+      <div className="fixed bottom-0 left-0 right-0 w-full pointer-events-none flex justify-center z-40">
+        <nav className="w-full max-w-[414px] bg-white/90 backdrop-blur-lg border-t border-black/5 px-6 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] flex justify-between items-center pointer-events-auto">
+          <NavButton icon={<Home />} label="Início" active={view === 'home'} onClick={() => setView('home')} />
+          <NavButton icon={<ListTodo />} label="Tarefas" active={view === 'tasks'} onClick={() => setView('tasks')} />
+          <div className="relative -top-6">
+            <button 
+              onClick={() => setShowNewTask(true)}
+              className="bg-sage-green text-white w-14 h-14 rounded-full shadow-xl flex items-center justify-center transform active:scale-95 transition-transform"
+            >
+              <Plus size={28} />
+            </button>
+          </div>
+          <NavButton icon={<HistoryIcon />} label="Histórico" active={view === 'history'} onClick={() => setView('history')} />
+          <button onClick={onLogout} className="flex flex-col items-center gap-1 p-2 text-base-text/40 hover:text-base-text/80 transition-colors">
+            <LogOut size={22} />
+            <span className="text-[10px] font-medium">Sair</span>
+          </button>
+        </nav>
+      </div>
 
       {/* Basic New Task Modal */}
       {showNewTask && (
@@ -220,38 +233,58 @@ function NavButton({ icon, label, active, onClick }: { icon: React.ReactNode, la
   );
 }
 
-function TaskCard({ task, onToggle }: { task: Task, onToggle: () => void }) {
+function TaskCard({ task, onToggle, onDelete }: { task: Task, onToggle: () => void, onDelete: () => void }) {
   const isCompleted = task.status === 'concluida';
   
   return (
-    <motion.div 
-      layout
-      initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-      className={cn(
-        "bg-white p-4 rounded-2xl shadow-sm border border-black/5 flex items-center gap-4 transition-all",
-        isCompleted && "opacity-60 bg-base-bg"
-      )}
-    >
-      <button onClick={onToggle} className={cn("flex-shrink-0 transition-colors", isCompleted ? "text-sage-green" : "text-base-text/20 hover:text-base-text/40")}>
-        {isCompleted ? <CheckCircle2 size={28} /> : <Circle size={28} />}
-      </button>
-      <div className="flex-1">
-        <h3 className={cn("font-medium transition-all", isCompleted && "line-through text-base-text/60")}>{task.title}</h3>
-        <div className="flex flex-wrap gap-2 mt-1 text-xs text-base-text/50 items-center">
-          <span className="bg-base-bg px-2 py-0.5 rounded-md">{task.category}</span>
-          {task.assigned_to === 1 && <span className="bg-sage-green/10 text-sage-green px-2 py-0.5 rounded-md font-medium">Henrique</span>}
-          {task.assigned_to === 2 && <span className="bg-terracotta/10 text-terracotta px-2 py-0.5 rounded-md font-medium">Jessica</span>}
-          {!task.assigned_to && <span className="bg-black/5 px-2 py-0.5 rounded-md">Nós dois</span>}
-          {task.due_date && (
-            <span className={cn(
-              "px-2 py-0.5 rounded-md", 
-              isPast(new Date(task.due_date)) && !isToday(new Date(task.due_date)) && !isCompleted ? "bg-red-100 text-red-600 font-medium" : "bg-base-bg"
-            )}>
-              📅 {format(new Date(task.due_date), "dd/MM", { locale: ptBR })}
-            </span>
-          )}
+    <div className="relative overflow-hidden rounded-2xl group w-full touch-pan-y">
+      {/* Background Action Colors */}
+      <div className="absolute inset-0 flex justify-between items-center px-6">
+        <div className="text-sage-green opacity-80 font-medium text-sm flex items-center gap-2">
+          <CheckCircle2 size={24} /> <span className="hidden sm:inline">Concluir</span>
+        </div>
+        <div className="text-red-500 opacity-80 font-medium text-sm flex items-center gap-2">
+          <span className="hidden sm:inline">Excluir</span> <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" fill="none"/><path stroke="currentColor" strokeLinecap="round" strokeWidth="2" d="M9 9l6 6M15 9l-6 6"/>
         </div>
       </div>
-    </motion.div>
+
+      <motion.div 
+        layout
+        drag="x"
+        dragConstraints={{ left: 0, right: 0 }}
+        dragElastic={0.4}
+        dragSnapToOrigin
+        onDragEnd={(e, { offset }) => {
+          if (offset.x > 80) onToggle();
+          else if (offset.x < -80) onDelete();
+        }}
+        whileTap={{ cursor: "grabbing" }}
+        className={cn(
+          "bg-white p-4 rounded-2xl shadow-sm border border-black/5 flex items-center gap-4 transition-colors relative z-10 min-h-[80px]",
+          isCompleted && "opacity-80 bg-[#f9f9f9]"
+        )}
+      >
+        <button onClick={onToggle} className={cn("flex-shrink-0 transition-all active:scale-75", isCompleted ? "text-sage-green" : "text-base-text/20")}>
+          {isCompleted ? <CheckCircle2 size={28} /> : <Circle size={28} />}
+        </button>
+        <div className="flex-1 overflow-hidden">
+          <h3 className={cn("font-medium transition-all truncate text-[17px]", isCompleted && "line-through text-base-text/50")}>{task.title}</h3>
+          <div className="flex flex-wrap gap-2 mt-2 text-[11px] text-base-text/60 items-center font-medium">
+            <span className="bg-base-text/5 px-2 py-0.5 rounded-md">{task.category}</span>
+            {task.assigned_to === 1 && <span className="bg-sage-green/10 text-sage-green px-2 py-0.5 rounded-md">Henrique</span>}
+            {task.assigned_to === 2 && <span className="bg-terracotta/10 text-terracotta px-2 py-0.5 rounded-md">Jessica</span>}
+            {!task.assigned_to && <span className="bg-black/5 px-2 py-0.5 rounded-md">Nós dois</span>}
+            {task.due_date && (
+              <span className={cn(
+                "px-2 py-0.5 rounded-md", 
+                isPast(new Date(task.due_date)) && !isToday(new Date(task.due_date)) && !isCompleted ? "bg-red-50 text-red-500" : "bg-base-bg"
+              )}>
+                {format(new Date(task.due_date), "dd/MM", { locale: ptBR })}
+              </span>
+            )}
+          </div>
+        </div>
+      </motion.div>
+    </div>
   );
 }
