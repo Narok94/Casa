@@ -35,8 +35,9 @@ export default function Login({ onLogin }: { onLogin: (user: User) => void }) {
               setError('');
             }, 1000);
           }
-        } catch (e) {
-          setError('Erro ao conectar');
+        } catch (e: any) {
+          console.error(e);
+          setError('Erro: ' + e.message);
         }
       }
     }
