@@ -1,11 +1,14 @@
-import { Pool } from '@neondatabase/serverless';
+import pg from 'pg';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Create a new pool using the Neon serverless driver
+const { Pool } = pg;
+
+// Create a new pool
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://fake_user:fake_password@ep-fake-host.neon.tech/fake_db', // fallback to prevent crash if not set
+  connectionString: process.env.DATABASE_URL || 'postgresql://fake_user:fake_password@ep-fake-host.neon.tech/fake_db',
+  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
 });
 
 export const setupDatabase = async () => {

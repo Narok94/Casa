@@ -39,7 +39,12 @@ async function startServer() {
       if (pin === '4902' || pin === '9860') {
          const mockUser = pin === '4902' ? { id: 1, name: 'Henrique', color: '#5F7A61' } : { id: 2, name: 'Jessica', color: '#A96B54' };
          const token = jwt.sign(mockUser, JWT_SECRET, { expiresIn: '7d' });
-         res.cookie('auth_token', token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', maxAge: 7 * 24 * 60 * 60 * 1000 });
+         res.cookie('auth_token', token, { 
+           httpOnly: true, 
+           secure: true, 
+           sameSite: 'none',
+           maxAge: 7 * 24 * 60 * 60 * 1000 
+         });
          return res.json({ user: mockUser });
       }
       return res.status(401).json({ error: 'PIN incorreto' });
@@ -60,7 +65,12 @@ async function startServer() {
       const payload = { id: user.id, name: user.name, color: user.color };
       const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
       
-      res.cookie('auth_token', token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', maxAge: 7 * 24 * 60 * 60 * 1000 });
+      res.cookie('auth_token', token, { 
+        httpOnly: true, 
+        secure: true, 
+        sameSite: 'none',
+        maxAge: 7 * 24 * 60 * 60 * 1000 
+      });
       res.json({ user: payload });
     } catch (err) {
       console.error(err);
@@ -70,7 +80,11 @@ async function startServer() {
 
   // Logout
   app.post('/api/auth/logout', (req, res) => {
-    res.clearCookie('auth_token');
+    res.clearCookie('auth_token', { 
+      httpOnly: true, 
+      secure: true, 
+      sameSite: 'none'
+    });
     res.json({ success: true });
   });
 
