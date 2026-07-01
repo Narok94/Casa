@@ -1,0 +1,23 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Quicksand:wght@500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Quicksand", ui-sans-serif, system-ui, sans-serif;
+
+  --color-base-bg: #FAF7F2;
+  --color-base-text: #2E2A26;
+  --color-sage-green: #5F7A61;
+  --color-terracotta: #A96B54;
+  
+  --color-henrique: #5F7A61;
+  --color-jessica: #A96B54;
+}
+
+body {
+  @apply bg-base-bg text-base-text font-sans antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  @apply font-display tracking-tight;
+}

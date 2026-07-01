@@ -1,0 +1,242 @@
+import React, { useEffect, useState } from 'react';
+import { User, Task } from '../types';
+import { motion } from 'motion/react';
+import { CheckCircle2, Circle, Plus, ListTodo, History as HistoryIcon, Home, LogOut } from 'lucide-react';
+import { cn } from '../lib/utils';
+import { format, isToday, isPast, isFuture } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
+
+export default function Dashboard({ user, onLogout }: { user: User, onLogout: () => void }) {
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [view, setView] = useState<'home' | 'tasks' | 'history'>('home');
+  const [showNewTask, setShowNewTask] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    fetch('/api/tasks')
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data)) setTasks(data);
+      });
+  }, [refreshKey]);
+
+  const toggleTask = async (task: Task) => {
+    const isCompleting = task.status !== 'concluida';
+    await fetch(`/api/tasks/${task.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...task, status: isCompleting ? 'concluida' : 'pendente' })
+    });
+    setRefreshKey(k => k + 1);
+  };
+
+  const pendingTasks = tasks.filter(t => t.status !== 'concluida');
+  const completedTasks = tasks.filter(t => t.status === 'concluida');
+  
+  const todayTasks = pendingTasks.filter(t => t.due_date && isToday(new Date(t.due_date)));
+  const overdueTasks = pendingTasks.filter(t => t.due_date && isPast(new Date(t.due_date)) && !isToday(new Date(t.due_date)));
+
+  const totalTasksThisWeek = tasks.length;
+  const completedThisWeek = completedTasks.length;
+  const progressPercent = totalTasksThisWeek === 0 ? 0 : Math.round((completedThisWeek / totalTasksThisWeek) * 100);
+
+  return (
+    <div className="flex flex-col min-h-screen bg-base-bg pb-20">
+      <header className="p-6 pb-2 flex justify-between items-start">
+        <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}>
+          <h1 className="text-2xl font-display font-medium">Olá, {user.name} 👋</h1>
+          <p className="text-base-text/60 capitalize">{format(new Date(), "EEEE, d 'de' MMMM", { locale: ptBR })}</p>
+        </motion.div>
+        <button onClick={onLogout} className="p-2 text-base-text/40 hover:text-base-text transition-colors">
+          <LogOut size={20} />
+        </button>
+      </header>
+
+      <main className="flex-1 p-6 flex flex-col gap-8">
+        {view === 'home' && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col gap-8">
+            
+            <section className="bg-white p-5 rounded-2xl border border-black/5 shadow-sm">
+              <div className="flex justify-between items-center mb-3">
+                <h3 className="font-semibold text-base-text">Progresso Geral</h3>
+                <span className="text-sm text-base-text/60 font-medium">{completedThisWeek} de {totalTasksThisWeek} tarefas</span>
+              </div>
+              <div className="h-2.5 w-full bg-base-bg rounded-full overflow-hidden">
+                <motion.div 
+                  initial={{ width: 0 }} animate={{ width: `${progressPercent}%` }}
+                  className="h-full bg-sage-green rounded-full"
+                />
+              </div>
+            </section>
+
+            <section>
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-lg font-display font-semibold">Hoje</h2>
+              </div>
+              
+              {overdueTasks.length > 0 && (
+                <div className="mb-4">
+                  <span className="text-xs font-semibold text-red-500 uppercase tracking-wider mb-2 block">Atrasadas</span>
+                  <div className="flex flex-col gap-3">
+                    {overdueTasks.map(t => <TaskCard key={t.id} task={t} onToggle={() => toggleTask(t)} />)}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-col gap-3">
+                {todayTasks.length === 0 && overdueTasks.length === 0 ? (
+                  <div className="p-8 text-center bg-white rounded-3xl border border-black/5 shadow-sm">
+                    <p className="text-base-text/60 font-medium">Tudo em dia por aqui! 🎉</p>
+                  </div>
+                ) : (
+                  todayTasks.map(t => <TaskCard key={t.id} task={t} onToggle={() => toggleTask(t)} />)
+                )}
+              </div>
+            </section>
+
+          </motion.div>
+        )}
+
+        {view === 'tasks' && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col gap-4">
+            <h2 className="text-lg font-display font-semibold mb-2">Todas as Pendências</h2>
+            {pendingTasks.map(t => <TaskCard key={t.id} task={t} onToggle={() => toggleTask(t)} />)}
+            {pendingTasks.length === 0 && (
+              <p className="text-center text-base-text/50 mt-10">Nenhuma tarefa pendente.</p>
+            )}
+          </motion.div>
+        )}
+
+        {view === 'history' && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col gap-4">
+            <h2 className="text-lg font-display font-semibold mb-2">Histórico da Semana</h2>
+            
+            <div className="bg-[#FAF7F2] border border-black/5 p-5 rounded-2xl shadow-sm mb-4">
+              <h3 className="font-semibold text-base-text mb-2">Placar da Limpeza 🧹</h3>
+              <p className="text-sm text-base-text/70 mb-2">
+                Henrique concluiu {completedTasks.filter(t => t.assigned_to === 1).length}, 
+                Jessica concluiu {completedTasks.filter(t => t.assigned_to === 2).length}. 💪
+              </p>
+              <p className="text-xs text-base-text/50 italic">
+                Lembrete: isso não é uma competição (mas quem fizer menos paga a pizza 🍕).
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              {completedTasks.length > 0 ? (
+                completedTasks.map(t => <TaskCard key={t.id} task={t} onToggle={() => toggleTask(t)} />)
+              ) : (
+                <p className="text-center text-base-text/50 mt-4">Nenhuma tarefa concluída ainda.</p>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </main>
+
+      <nav className="fixed bottom-0 w-full bg-white/80 backdrop-blur-md border-t border-black/5 p-4 pb-safe flex justify-around items-center">
+        <NavButton icon={<Home />} label="Início" active={view === 'home'} onClick={() => setView('home')} />
+        <button 
+          onClick={() => setShowNewTask(true)}
+          className="bg-sage-green text-white p-4 rounded-full shadow-lg transform -translate-y-4 hover:scale-105 transition-transform"
+        >
+          <Plus size={24} />
+        </button>
+        <NavButton icon={<ListTodo />} label="Tarefas" active={view === 'tasks'} onClick={() => setView('tasks')} />
+        <NavButton icon={<HistoryIcon />} label="Histórico" active={view === 'history'} onClick={() => setView('history')} />
+      </nav>
+
+      {/* Basic New Task Modal */}
+      {showNewTask && (
+        <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-4 pb-0 sm:pb-4">
+          <motion.div 
+            initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
+            className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 shadow-xl"
+          >
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="font-display font-semibold text-xl">Nova Tarefa</h2>
+              <button onClick={() => setShowNewTask(false)} className="text-base-text/50">✕</button>
+            </div>
+            
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              const formData = new FormData(e.currentTarget);
+              await fetch('/api/tasks', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  title: formData.get('title'),
+                  category: formData.get('category'),
+                  assigned_to: formData.get('assigned_to') ? parseInt(formData.get('assigned_to') as string) : null,
+                  due_date: formData.get('due_date') || null,
+                })
+              });
+              setShowNewTask(false);
+              setRefreshKey(k => k + 1);
+            }} className="flex flex-col gap-4">
+              <input required name="title" placeholder="O que precisa ser feito?" className="p-3 bg-base-bg rounded-xl w-full outline-none focus:ring-2 focus:ring-sage-green/50" />
+              
+              <select name="category" className="p-3 bg-base-bg rounded-xl w-full outline-none">
+                <option value="Limpeza">🧹 Limpeza</option>
+                <option value="Cozinha">🍳 Cozinha</option>
+                <option value="Compras">🛒 Compras</option>
+                <option value="Contas">💳 Contas</option>
+                <option value="Manutenção">🔧 Manutenção</option>
+                <option value="Pets">🐾 Pets</option>
+                <option value="Outros">📌 Outros</option>
+              </select>
+
+              <select name="assigned_to" className="p-3 bg-base-bg rounded-xl w-full outline-none">
+                <option value="">Nós dois</option>
+                <option value="1">Henrique</option>
+                <option value="2">Jessica</option>
+              </select>
+
+              <input type="date" name="due_date" className="p-3 bg-base-bg rounded-xl w-full outline-none" />
+
+              <button type="submit" className="mt-4 bg-base-text text-white p-4 rounded-xl font-medium w-full hover:bg-black/80 transition-colors">
+                Criar Tarefa
+              </button>
+            </form>
+          </motion.div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NavButton({ icon, label, active, onClick }: { icon: React.ReactNode, label: string, active: boolean, onClick: () => void }) {
+  return (
+    <button onClick={onClick} className={cn("flex flex-col items-center gap-1 p-2 transition-colors", active ? "text-sage-green" : "text-base-text/40 hover:text-base-text/80")}>
+      {React.cloneElement(icon as React.ReactElement<any>, { size: 22 })}
+      <span className="text-[10px] font-medium">{label}</span>
+    </button>
+  );
+}
+
+function TaskCard({ task, onToggle }: { task: Task, onToggle: () => void }) {
+  const isCompleted = task.status === 'concluida';
+  
+  return (
+    <motion.div 
+      layout
+      initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+      className={cn(
+        "bg-white p-4 rounded-2xl shadow-sm border border-black/5 flex items-center gap-4 transition-all",
+        isCompleted && "opacity-60 bg-base-bg"
+      )}
+    >
+      <button onClick={onToggle} className={cn("flex-shrink-0 transition-colors", isCompleted ? "text-sage-green" : "text-base-text/20 hover:text-base-text/40")}>
+        {isCompleted ? <CheckCircle2 size={28} /> : <Circle size={28} />}
+      </button>
+      <div className="flex-1">
+        <h3 className={cn("font-medium transition-all", isCompleted && "line-through text-base-text/60")}>{task.title}</h3>
+        <div className="flex gap-2 mt-1 text-xs text-base-text/50 items-center">
+          <span className="bg-base-bg px-2 py-0.5 rounded-md">{task.category}</span>
+          {task.assigned_to === 1 && <span className="bg-sage-green/10 text-sage-green px-2 py-0.5 rounded-md font-medium">Henrique</span>}
+          {task.assigned_to === 2 && <span className="bg-terracotta/10 text-terracotta px-2 py-0.5 rounded-md font-medium">Jessica</span>}
+          {!task.assigned_to && <span className="bg-black/5 px-2 py-0.5 rounded-md">Nós dois</span>}
+        </div>
+      </div>
+    </motion.div>
+  );
+}
