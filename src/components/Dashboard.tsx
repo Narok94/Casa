@@ -36,6 +36,17 @@ const weekdaysFull = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira'
 
 const categoriesList = ['Limpeza', 'Cozinha', 'Compras', 'Contas', 'Manutenção', 'Pets', 'Jardim', 'Outros'];
 
+const categoryEmojis: Record<string, string> = {
+  'Limpeza': '🧹',
+  'Cozinha': '🍳',
+  'Compras': '🛒',
+  'Contas': '💳',
+  'Manutenção': '🔧',
+  'Pets': '🐾',
+  'Jardim': '🌱',
+  'Outros': '📦'
+};
+
 // Format date in YYYY-MM-DD local time to avoid timezone shifts
 const getLocalDateString = (date: Date) => {
   const year = date.getFullYear();
@@ -352,7 +363,7 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
             {/* Today list */}
             <section className="flex flex-col gap-3">
               <div className="flex justify-between items-center mb-1">
-                <h2 className="text-lg font-display font-semibold">Hoje</h2>
+                <h2 className="text-lg font-display font-semibold flex items-center gap-1.5">🗓️ Hoje</h2>
                 <span className="text-xs font-semibold bg-black/5 text-base-text/60 px-2.5 py-1 rounded-full">
                   {combinedTodayItems.filter(item => !item.isCompleted).length} pendentes
                 </span>
@@ -360,8 +371,10 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
 
               <div className="flex flex-col gap-3">
                 {combinedTodayItems.length === 0 ? (
-                  <div className="p-8 text-center bg-white rounded-3xl border border-black/5 shadow-sm">
-                    <p className="text-base-text/60 font-medium text-sm">Sem tarefas agendadas para hoje! 🎉</p>
+                  <div className="p-8 text-center bg-white rounded-3xl border border-black/5 shadow-sm flex flex-col items-center justify-center gap-2 py-10">
+                    <span className="text-4xl animate-bounce">✨</span>
+                    <p className="text-base-text font-semibold text-sm">Tudo em dia por hoje! 💫</p>
+                    <p className="text-xs text-base-text/50">Nenhuma atividade pendente. Que tal descansar ou criar algo novo?</p>
                   </div>
                 ) : (
                   combinedTodayItems.map(item => (
@@ -437,7 +450,7 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
                     >
                       <option value="todas">Todas</option>
                       {categoriesList.map(cat => (
-                        <option key={cat} value={cat}>{cat}</option>
+                        <option key={cat} value={cat}>{(categoryEmojis[cat] || '') + ' ' + cat}</option>
                       ))}
                     </select>
                   </div>
@@ -452,50 +465,76 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
                 {/* Routines section */}
                 <div className="flex flex-col gap-3">
                   <div className="flex justify-between items-center">
-                    <h3 className="font-display font-semibold text-sm text-base-text/70 uppercase tracking-wider">Rotinas Fixas</h3>
+                    <h3 className="font-display font-semibold text-sm text-base-text/70 uppercase tracking-wider flex items-center gap-1.5">📋 Rotinas Fixas</h3>
                     <span className="text-xs font-bold text-sage-green bg-sage-green/10 px-2 py-0.5 rounded">
                       {filteredRoutines.length} ativas
                     </span>
                   </div>
                   <div className="flex flex-col gap-3">
                     {filteredRoutines.length === 0 ? (
-                      <p className="text-center text-xs text-base-text/40 py-4 bg-white rounded-2xl border border-dashed border-black/10">Nenhuma rotina cadastrada.</p>
+                      <div className="p-8 text-center bg-white rounded-3xl border border-dashed border-black/10 flex flex-col items-center justify-center gap-1">
+                        <span className="text-3xl animate-bounce">🌱</span>
+                        <p className="text-xs text-base-text/60 font-semibold mt-1">Ainda não tem nada por aqui — bora começar?</p>
+                        <p className="text-[10px] text-base-text/40">Crie rotinas fixas no botão "+" abaixo</p>
+                      </div>
                     ) : (
-                      filteredRoutines.map(routine => (
-                        <div key={routine.id} className="bg-white p-4 rounded-3xl border border-black/5 shadow-sm flex items-center justify-between gap-4">
-                          <div className="overflow-hidden flex-1">
-                            <h4 className="font-semibold text-[16px] text-base-text truncate">{routine.title}</h4>
-                            <div className="flex flex-wrap gap-2 mt-2 items-center text-[10px] font-semibold text-base-text/50">
-                              <span className="bg-base-text/5 px-2 py-0.5 rounded">{routine.category}</span>
-                              <span className="bg-sage-green/10 text-sage-green px-2 py-0.5 rounded font-bold">
-                                {formatDaysOfWeek(routine.days_of_week)}
-                              </span>
-                              {routine.assigned_to === 1 && <span className="text-[#5F7A61]">Henrique</span>}
-                              {routine.assigned_to === 2 && <span className="text-[#A96B54]">Jessica</span>}
-                              {!routine.assigned_to && <span>Nós dois</span>}
+                      filteredRoutines.map(routine => {
+                        let routineBorderAndBgStyle = '';
+                        if (routine.assigned_to === 1) {
+                          routineBorderAndBgStyle = 'border-l-[6px] border-l-sage-green bg-[#5F7A61]/5 border-y-black/5 border-r-black/5';
+                        } else if (routine.assigned_to === 2) {
+                          routineBorderAndBgStyle = 'border-l-[6px] border-l-terracotta bg-[#A96B54]/5 border-y-black/5 border-r-black/5';
+                        } else {
+                          routineBorderAndBgStyle = 'border-l-[6px] border-l-amber-500 bg-amber-500/5 border-y-black/5 border-r-black/5';
+                        }
+
+                        return (
+                          <div 
+                            key={routine.id} 
+                            className={cn(
+                              "p-4 rounded-3xl shadow-sm flex items-center justify-between gap-4 border transition-colors",
+                              routineBorderAndBgStyle
+                            )}
+                          >
+                            <div className="overflow-hidden flex-1">
+                              <h4 className="font-semibold text-[16px] text-base-text truncate">{routine.title}</h4>
+                              <div className="flex flex-wrap gap-2 mt-2 items-center text-[10px] font-semibold text-base-text/50">
+                                <span className="bg-base-text/5 px-2 py-0.5 rounded">{(categoryEmojis[routine.category] || '') + ' ' + routine.category}</span>
+                                <span className="bg-sage-green/10 text-sage-green px-2 py-0.5 rounded font-bold">
+                                  {formatDaysOfWeek(routine.days_of_week)}
+                                </span>
+                                {routine.assigned_to === 1 && <span className="text-[#5F7A61]">Henrique</span>}
+                                {routine.assigned_to === 2 && <span className="text-[#A96B54]">Jessica</span>}
+                                {!routine.assigned_to && <span>Nós dois</span>}
+                                {routine.priority === 'alta' && (
+                                  <span className="bg-red-500/10 text-red-500 px-1.5 py-0.5 rounded flex items-center gap-0.5 text-[9px]">
+                                    🔥 Alta
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            
+                            <div className="flex items-center gap-2">
+                              <button 
+                                onClick={() => toggleRoutineActive(routine)}
+                                title={routine.active ? "Desativar" : "Ativar"}
+                                className={cn(
+                                  "p-1.5 rounded-full transition-all active:scale-90",
+                                  routine.active ? "text-sage-green hover:bg-sage-green/5" : "text-base-text/20 hover:bg-black/5"
+                                )}
+                              >
+                                {routine.active ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}
+                              </button>
+                              <button 
+                                onClick={() => deleteRoutine(routine.id)}
+                                className="p-1.5 text-base-text/20 hover:text-red-500 hover:bg-red-50 rounded-full transition-all active:scale-90"
+                              >
+                                <Trash2 size={16} />
+                              </button>
                             </div>
                           </div>
-                          
-                          <div className="flex items-center gap-2">
-                            <button 
-                              onClick={() => toggleRoutineActive(routine)}
-                              title={routine.active ? "Desativar" : "Ativar"}
-                              className={cn(
-                                "p-1.5 rounded-full transition-all active:scale-90",
-                                routine.active ? "text-sage-green hover:bg-sage-green/5" : "text-base-text/20 hover:bg-black/5"
-                              )}
-                            >
-                              {routine.active ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}
-                            </button>
-                            <button 
-                              onClick={() => deleteRoutine(routine.id)}
-                              className="p-1.5 text-base-text/20 hover:text-red-500 hover:bg-red-50 rounded-full transition-all active:scale-90"
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          </div>
-                        </div>
-                      ))
+                        );
+                      })
                     )}
                   </div>
                 </div>
@@ -503,14 +542,18 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
                 {/* Specific tasks (avulsas) section */}
                 <div className="flex flex-col gap-3">
                   <div className="flex justify-between items-center">
-                    <h3 className="font-display font-semibold text-sm text-base-text/70 uppercase tracking-wider">Tarefas Avulsas</h3>
+                    <h3 className="font-display font-semibold text-sm text-base-text/70 uppercase tracking-wider flex items-center gap-1.5">📌 Tarefas Avulsas</h3>
                     <span className="text-xs font-bold text-base-text/50 bg-black/5 px-2 py-0.5 rounded">
                       {filteredTasks.filter(t => t.status !== 'concluida').length} pendentes
                     </span>
                   </div>
                   <div className="flex flex-col gap-3">
                     {filteredTasks.length === 0 ? (
-                      <p className="text-center text-xs text-base-text/40 py-4 bg-white rounded-2xl border border-dashed border-black/10">Nenhuma tarefa avulsa pendente.</p>
+                      <div className="p-8 text-center bg-white rounded-3xl border border-dashed border-black/10 flex flex-col items-center justify-center gap-1 w-full">
+                        <span className="text-3xl animate-bounce">📌</span>
+                        <p className="text-xs text-base-text/60 font-semibold mt-1">Ainda não tem nada por aqui — bora começar?</p>
+                        <p className="text-[10px] text-base-text/40">Crie tarefas com datas específicas para organizar a semana</p>
+                      </div>
                     ) : (
                       filteredTasks.map(t => (
                         <UnifiedItemCard 
@@ -592,39 +635,55 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
                           key={idx}
                           onClick={() => setSelectedCalendarDate(day)}
                           className={cn(
-                            "aspect-square rounded-2xl flex flex-col items-center justify-center relative transition-all active:scale-95 gap-0.5",
+                            "min-h-[82px] py-2 px-0.5 rounded-xl flex flex-col items-center justify-start relative transition-all active:scale-95 gap-0.5",
                             !isCurrentMonth && "opacity-25",
-                            isSelected && "bg-base-text text-white shadow-md",
-                            !isSelected && isTodayDay && "border-2 border-sage-green font-bold",
+                            isSelected && "bg-sage-green/10 ring-2 ring-sage-green shadow-xs",
+                            !isSelected && isTodayDay && "bg-sage-green/5 border border-sage-green/30 font-bold",
                             !isSelected && !isTodayDay && "hover:bg-black/5"
                           )}
                         >
                           <span className={cn(
-                            "text-xs font-semibold",
-                            isSelected ? "text-white" : "text-base-text"
+                            "text-xs font-bold leading-none mb-0.5",
+                            isSelected ? "text-sage-green font-extrabold" : "text-base-text/70"
                           )}>
                             {day.getDate()}
                           </span>
                           
-                          {/* Dot indicators */}
+                          {/* Mini dynamic color bars */}
                           {dayItems.length > 0 && (
-                            <div className="flex gap-0.5 justify-center mt-0.5 max-w-full">
-                              {visibleAssignees.map((assigneeId, dotIdx) => {
-                                let dotColor = 'bg-slate-400';
-                                if (assigneeId === 1) dotColor = 'bg-[#5F7A61]';
-                                else if (assigneeId === 2) dotColor = 'bg-[#A96B54]';
-                                else dotColor = 'bg-yellow-500';
+                            <div className="flex flex-col gap-0.5 w-full px-0.5 mt-0.5 overflow-hidden">
+                              {dayItems.slice(0, 3).map((item, barIdx) => {
+                                let barBgColor = '';
+                                if (item.assigned_to === 1) barBgColor = 'bg-[#5F7A61]'; // Henrique
+                                else if (item.assigned_to === 2) barBgColor = 'bg-[#A96B54]'; // Jessica
+                                else barBgColor = 'bg-amber-500'; // Ambos
+
+                                const emoji = categoryEmojis[item.category] || '';
+                                const isFew = dayItems.length <= 2;
 
                                 return (
-                                  <span 
-                                    key={dotIdx} 
+                                  <div 
+                                    key={barIdx} 
                                     className={cn(
-                                      "w-1 h-1 rounded-full", 
-                                      isSelected ? "bg-white" : dotColor
-                                    )} 
-                                  />
+                                      "w-full rounded-sm flex items-center justify-center leading-none shadow-2xs transition-all",
+                                      isFew ? "h-4 text-[10px]" : "h-1.5 text-[0px]",
+                                      barBgColor
+                                    )}
+                                    title={item.title}
+                                  >
+                                    {isFew && emoji && (
+                                      <span className="text-[9px] leading-none text-white select-none">
+                                        {emoji}
+                                      </span>
+                                    )}
+                                  </div>
                                 );
                               })}
+                              {dayItems.length > 3 && (
+                                <span className="text-[8px] font-extrabold text-center block mt-0.5 text-base-text/50">
+                                  +{dayItems.length - 3}
+                                </span>
+                              )}
                             </div>
                           )}
                         </button>
@@ -647,8 +706,10 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
 
                   <div className="flex flex-col gap-3">
                     {getItemsForDate(selectedCalendarDate).length === 0 ? (
-                      <div className="p-8 text-center bg-white rounded-3xl border border-black/5 shadow-sm">
-                        <p className="text-base-text/40 text-xs font-semibold">Tudo livre neste dia! ☀️</p>
+                      <div className="p-8 text-center bg-white rounded-3xl border border-black/5 shadow-sm flex flex-col items-center justify-center gap-1.5 py-10 w-full">
+                        <span className="text-4xl">☀️</span>
+                        <p className="text-xs text-base-text/60 font-semibold mt-1">Dia inteirinho livre por aqui!</p>
+                        <p className="text-[10px] text-base-text/40">Aproveitem o descanso juntos ou programem algo especial! 💕</p>
                       </div>
                     ) : (
                       getItemsForDate(selectedCalendarDate).map(item => (
@@ -672,7 +733,7 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
         {/* --- VIEW: HISTORY (HISTÓRICO) --- */}
         {view === 'history' && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col gap-5">
-            <h2 className="text-lg font-display font-semibold mb-1">Histórico de Conclusões</h2>
+            <h2 className="text-lg font-display font-semibold mb-1 flex items-center gap-1.5">⏳ Histórico de Conclusões</h2>
 
             <div className="bg-white p-5 rounded-3xl border border-black/5 shadow-sm flex flex-col gap-3">
               <div className="flex items-center gap-2">
@@ -716,11 +777,15 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
 
             {/* List of completions */}
             <div className="flex flex-col gap-3 mt-2">
-              <h3 className="font-display font-semibold text-sm text-base-text/70 uppercase tracking-wider px-1">Atividades Recentes</h3>
+              <h3 className="font-display font-semibold text-sm text-base-text/70 uppercase tracking-wider px-1 flex items-center gap-1.5">⏱️ Atividades Recentes</h3>
               
               <div className="flex flex-col gap-3">
                 {completedTasksThisWeek.length === 0 && completedRoutinesThisWeek.length === 0 ? (
-                  <p className="text-center text-xs text-base-text/40 py-6 bg-white rounded-3xl border border-black/5">Nenhuma atividade concluída esta semana.</p>
+                  <div className="p-8 text-center bg-white rounded-3xl border border-black/5 shadow-sm flex flex-col items-center justify-center gap-2 py-10 w-full">
+                    <span className="text-4xl animate-bounce">🌱</span>
+                    <p className="text-xs text-base-text/60 font-semibold">Nenhuma atividade concluída esta semana.</p>
+                    <p className="text-[10px] text-base-text/40">Bora marcar o primeiro ponto no placar? 🚀</p>
+                  </div>
                 ) : (
                   <div className="flex flex-col gap-3">
                     {/* Render completed tasks */}
@@ -730,7 +795,7 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
                         <div className="flex-1 overflow-hidden">
                           <h4 className="font-medium text-sm text-base-text line-through truncate">{t.title}</h4>
                           <span className="text-[10px] bg-black/5 text-base-text/50 px-1.5 py-0.5 rounded font-bold mt-1 inline-block">
-                            Avulsa · {t.category}
+                            Avulsa · {(categoryEmojis[t.category] || '') + ' ' + t.category}
                           </span>
                         </div>
                       </div>
@@ -746,7 +811,7 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
                           <div className="flex-1 overflow-hidden">
                             <h4 className="font-medium text-sm text-base-text line-through truncate">{associatedRoutine.title}</h4>
                             <span className="text-[10px] bg-sage-green/10 text-sage-green px-1.5 py-0.5 rounded font-bold mt-1 inline-block">
-                              Rotina · {associatedRoutine.category}
+                              Rotina · {(categoryEmojis[associatedRoutine.category] || '') + ' ' + associatedRoutine.category}
                             </span>
                           </div>
                         </div>
@@ -901,7 +966,7 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
                 <label className="text-[11px] font-bold text-base-text/50 uppercase tracking-wider">Categoria</label>
                 <select name="category" className="p-3 bg-base-bg rounded-2xl w-full text-xs font-semibold outline-none border-none">
                   {categoriesList.map(cat => (
-                    <option key={cat} value={cat}>{cat}</option>
+                    <option key={cat} value={cat}>{(categoryEmojis[cat] || '') + ' ' + cat}</option>
                   ))}
                 </select>
               </div>
@@ -996,6 +1061,24 @@ function UnifiedItemCard({
   onToggle: () => void, 
   onDelete: () => void 
 }) {
+  let borderAndBgStyle = '';
+  if (item.assigned_to === 1) {
+    borderAndBgStyle = cn(
+      'border-l-[6px] border-l-sage-green bg-[#5F7A61]/5 border-y-black/5 border-r-black/5',
+      item.isCompleted ? 'opacity-75' : 'hover:bg-[#5F7A61]/10'
+    );
+  } else if (item.assigned_to === 2) {
+    borderAndBgStyle = cn(
+      'border-l-[6px] border-l-terracotta bg-[#A96B54]/5 border-y-black/5 border-r-black/5',
+      item.isCompleted ? 'opacity-75' : 'hover:bg-[#A96B54]/10'
+    );
+  } else {
+    borderAndBgStyle = cn(
+      'border-l-[6px] border-l-amber-500 bg-amber-500/5 border-y-black/5 border-r-black/5',
+      item.isCompleted ? 'opacity-75' : 'hover:bg-amber-500/10'
+    );
+  }
+
   return (
     <div className="relative overflow-hidden rounded-[24px] group w-full touch-pan-y shadow-xs">
       {/* Slide / Drag action background colors */}
@@ -1020,8 +1103,8 @@ function UnifiedItemCard({
         }}
         whileTap={{ cursor: "grabbing" }}
         className={cn(
-          "bg-white p-4 rounded-[24px] border border-black/5 flex items-center gap-4 transition-colors relative z-10 min-h-[76px]",
-          item.isCompleted && "opacity-75 bg-[#fcfcfc]"
+          "p-4 rounded-[24px] border flex items-center gap-4 transition-colors relative z-10 min-h-[76px]",
+          borderAndBgStyle
         )}
       >
         <button 
@@ -1043,7 +1126,7 @@ function UnifiedItemCard({
           </h3>
           
           <div className="flex flex-wrap gap-1.5 mt-2 text-[9px] font-bold text-base-text/50 items-center">
-            <span className="bg-base-text/5 px-2 py-0.5 rounded-md">{item.category}</span>
+            <span className="bg-base-text/5 px-2 py-0.5 rounded-md">{(categoryEmojis[item.category] || '') + ' ' + item.category}</span>
             
             {item.type === 'routine' ? (
               <span className="bg-sage-green/10 text-sage-green px-2 py-0.5 rounded-md">Rotina</span>
@@ -1062,7 +1145,9 @@ function UnifiedItemCard({
             )}
 
             {item.priority === 'alta' && (
-              <span className="bg-red-500/10 text-red-500 px-1.5 py-0.5 rounded">Alta</span>
+              <span className="bg-red-500/10 text-red-500 px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                🔥 Alta
+              </span>
             )}
           </div>
         </div>
