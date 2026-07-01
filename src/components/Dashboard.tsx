@@ -1103,7 +1103,7 @@ function UnifiedItemCard({
         }}
         whileTap={{ cursor: "grabbing" }}
         className={cn(
-          "p-4 rounded-[24px] border flex items-center gap-4 transition-colors relative z-10 min-h-[76px]",
+          "p-4 rounded-[24px] border flex items-center gap-4 transition-colors relative z-10 min-h-[76px] bg-white shadow-sm",
           borderAndBgStyle
         )}
       >
@@ -1151,6 +1151,17 @@ function UnifiedItemCard({
             )}
           </div>
         </div>
+
+        {/* Delete button (explicit, not just swipe) */}
+        <button 
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          className="p-2 text-base-text/20 hover:text-red-500 hover:bg-red-50 rounded-full transition-all flex-shrink-0 active:scale-90"
+        >
+          <Trash2 size={18} />
+        </button>
       </motion.div>
     </div>
   );
