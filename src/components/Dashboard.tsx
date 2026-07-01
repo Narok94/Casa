@@ -36,6 +36,13 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
   const todayTasks = pendingTasks.filter(t => t.due_date && isToday(new Date(t.due_date)));
   const overdueTasks = pendingTasks.filter(t => t.due_date && isPast(new Date(t.due_date)) && !isToday(new Date(t.due_date)));
 
+  const sortedPendingTasks = [...pendingTasks].sort((a, b) => {
+    if (!a.due_date && !b.due_date) return 0;
+    if (!a.due_date) return 1;
+    if (!b.due_date) return -1;
+    return new Date(a.due_date).getTime() - new Date(b.due_date).getTime();
+  });
+
   const totalTasksThisWeek = tasks.length;
   const completedThisWeek = completedTasks.length;
   const progressPercent = totalTasksThisWeek === 0 ? 0 : Math.round((completedThisWeek / totalTasksThisWeek) * 100);
@@ -100,8 +107,8 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
         {view === 'tasks' && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col gap-4">
             <h2 className="text-lg font-display font-semibold mb-2">Todas as Pendências</h2>
-            {pendingTasks.map(t => <TaskCard key={t.id} task={t} onToggle={() => toggleTask(t)} />)}
-            {pendingTasks.length === 0 && (
+            {sortedPendingTasks.map(t => <TaskCard key={t.id} task={t} onToggle={() => toggleTask(t)} />)}
+            {sortedPendingTasks.length === 0 && (
               <p className="text-center text-base-text/50 mt-10">Nenhuma tarefa pendente.</p>
             )}
           </motion.div>
@@ -230,11 +237,19 @@ function TaskCard({ task, onToggle }: { task: Task, onToggle: () => void }) {
       </button>
       <div className="flex-1">
         <h3 className={cn("font-medium transition-all", isCompleted && "line-through text-base-text/60")}>{task.title}</h3>
-        <div className="flex gap-2 mt-1 text-xs text-base-text/50 items-center">
+        <div className="flex flex-wrap gap-2 mt-1 text-xs text-base-text/50 items-center">
           <span className="bg-base-bg px-2 py-0.5 rounded-md">{task.category}</span>
           {task.assigned_to === 1 && <span className="bg-sage-green/10 text-sage-green px-2 py-0.5 rounded-md font-medium">Henrique</span>}
           {task.assigned_to === 2 && <span className="bg-terracotta/10 text-terracotta px-2 py-0.5 rounded-md font-medium">Jessica</span>}
           {!task.assigned_to && <span className="bg-black/5 px-2 py-0.5 rounded-md">Nós dois</span>}
+          {task.due_date && (
+            <span className={cn(
+              "px-2 py-0.5 rounded-md", 
+              isPast(new Date(task.due_date)) && !isToday(new Date(task.due_date)) && !isCompleted ? "bg-red-100 text-red-600 font-medium" : "bg-base-bg"
+            )}>
+              📅 {format(new Date(task.due_date), "dd/MM", { locale: ptBR })}
+            </span>
+          )}
         </div>
       </div>
     </motion.div>
