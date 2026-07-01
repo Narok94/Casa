@@ -1,2 +1,11 @@
-import pool from "./src/db.ts";
-pool.query("SELECT * FROM users").then(r => console.log(r.rows)).catch(console.error);
+import pool, { setupDatabase } from "./src/db.ts";
+
+async function run() {
+  await setupDatabase();
+  const r = await pool.query("SELECT * FROM users");
+  console.log("Users:", r.rows);
+  const r2 = await pool.query("SELECT * FROM routines");
+  console.log("Routines:", r2.rows);
+}
+
+run().catch(console.error);

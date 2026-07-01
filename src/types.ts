@@ -19,3 +19,23 @@ export interface Task {
   created_at: string;
   completed_at: string | null;
 }
+
+export interface Routine {
+  id: number;
+  title: string;
+  category: string;
+  assigned_to: number | null; // NULL = Nós dois
+  days_of_week: number[]; // 0=domingo ... 6=sábado
+  priority: 'baixa' | 'media' | 'alta';
+  active: boolean;
+  created_by: number;
+  created_at: string;
+}
+
+export interface RoutineCompletion {
+  id: number;
+  routine_id: number;
+  completion_date: string; // YYYY-MM-DD
+  completed_by: number;
+  completed_at: string;
+}

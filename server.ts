@@ -8,6 +8,17 @@ import pool, { setupDatabase } from './src/db.js';
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key-for-jwt';
 const PORT = 3000;
 
+let mockRoutines = [
+  { id: 1, title: 'Tirar o lixo', category: 'Limpeza', assigned_to: 1, days_of_week: [2, 4, 6], priority: 'media', active: true, created_by: 1, created_at: new Date() },
+  { id: 2, title: 'Regar as plantas', category: 'Jardim', assigned_to: 2, days_of_week: [1, 3, 5], priority: 'baixa', active: true, created_by: 2, created_at: new Date() },
+  { id: 3, title: 'Fazer o jantar', category: 'Cozinha', assigned_to: null, days_of_week: [1, 2, 3, 4, 5], priority: 'alta', active: true, created_by: 1, created_at: new Date() }
+];
+
+let mockRoutineCompletions: any[] = [];
+let mockTasks: any[] = [
+  { id: 1, title: 'Comprar lâmpadas novas', description: '', category: 'Limpeza', assigned_to: 1, status: 'pendente', priority: 'baixa', due_date: new Date().toISOString().split('T')[0], created_by: 1, created_at: new Date() }
+];
+
 async function startServer() {
   const app = express();
   
@@ -118,9 +129,9 @@ async function startServer() {
     }
   });
 
-  // Get Tasks
+  // Get Tasks (avulsas only)
   app.get('/api/tasks', authenticateToken, async (req, res) => {
-    if (!process.env.DATABASE_URL) return res.json([]);
+    if (!process.env.DATABASE_URL) return res.json(mockTasks);
     try {
       const result = await pool.query('SELECT * FROM tasks ORDER BY created_at DESC');
       res.json(result.rows);
@@ -131,15 +142,30 @@ async function startServer() {
 
   // Create Task
   app.post('/api/tasks', authenticateToken, async (req, res) => {
-    if (!process.env.DATABASE_URL) return res.status(500).json({ error: 'Database not connected' });
-    const { title, description, category, assigned_to, priority, due_date, is_recurring, recurrence } = req.body;
+    const { title, description, category, assigned_to, priority, due_date } = req.body;
     const user = (req as any).user;
+    if (!process.env.DATABASE_URL) {
+      const newTask = {
+        id: mockTasks.length + 1,
+        title,
+        description: description || '',
+        category,
+        assigned_to: assigned_to || null,
+        status: 'pendente',
+        priority: priority || 'media',
+        due_date: due_date || null,
+        created_by: user.id,
+        created_at: new Date()
+      };
+      mockTasks.push(newTask);
+      return res.json(newTask);
+    }
     try {
       const result = await pool.query(`
-        INSERT INTO tasks (title, description, category, assigned_to, priority, due_date, is_recurring, recurrence, created_by)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        INSERT INTO tasks (title, description, category, assigned_to, priority, due_date, created_by)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING *
-      `, [title, description, category, assigned_to || null, priority, due_date || null, is_recurring || false, recurrence || null, user.id]);
+      `, [title, description || '', category, assigned_to || null, priority || 'media', due_date || null, user.id]);
       res.json(result.rows[0]);
     } catch (err) {
       console.error(err);
@@ -147,11 +173,26 @@ async function startServer() {
     }
   });
 
-  // Update Task (e.g. complete)
+  // Update Task
   app.put('/api/tasks/:id', authenticateToken, async (req, res) => {
-    if (!process.env.DATABASE_URL) return res.status(500).json({ error: 'Database not connected' });
     const { id } = req.params;
     const { status, title, description, category, assigned_to, priority, due_date } = req.body;
+    if (!process.env.DATABASE_URL) {
+      const task = mockTasks.find(t => t.id === parseInt(id));
+      if (!task) return res.status(404).json({ error: 'Tarefa não encontrada' });
+      if (status !== undefined) {
+        task.status = status;
+        if (status === 'concluida') task.completed_at = new Date();
+        else task.completed_at = null;
+      }
+      if (title !== undefined) task.title = title;
+      if (description !== undefined) task.description = description;
+      if (category !== undefined) task.category = category;
+      task.assigned_to = assigned_to || null;
+      if (priority !== undefined) task.priority = priority;
+      if (due_date !== undefined) task.due_date = due_date;
+      return res.json(task);
+    }
     try {
       if (status === 'concluida') {
          const result = await pool.query(`
@@ -173,12 +214,173 @@ async function startServer() {
 
   // Delete Task
   app.delete('/api/tasks/:id', authenticateToken, async (req, res) => {
-    if (!process.env.DATABASE_URL) return res.status(500).json({ error: 'Database not connected' });
+    const { id } = req.params;
+    if (!process.env.DATABASE_URL) {
+      mockTasks = mockTasks.filter(t => t.id !== parseInt(id));
+      return res.json({ success: true });
+    }
     try {
-      await pool.query('DELETE FROM tasks WHERE id = $1', [req.params.id]);
+      await pool.query('DELETE FROM tasks WHERE id = $1', [id]);
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: 'Erro ao deletar tarefa' });
+    }
+  });
+
+  // --- ROUTINES ---
+
+  // Get Routines
+  app.get('/api/routines', authenticateToken, async (req, res) => {
+    if (!process.env.DATABASE_URL) return res.json(mockRoutines);
+    try {
+      const result = await pool.query('SELECT * FROM routines ORDER BY id DESC');
+      res.json(result.rows);
+    } catch (err) {
+      res.status(500).json({ error: 'Erro ao buscar rotinas' });
+    }
+  });
+
+  // Create Routine
+  app.post('/api/routines', authenticateToken, async (req, res) => {
+    const { title, category, assigned_to, days_of_week, priority } = req.body;
+    const user = (req as any).user;
+    if (!process.env.DATABASE_URL) {
+      const newRoutine = {
+        id: mockRoutines.length + 1,
+        title,
+        category,
+        assigned_to: assigned_to || null,
+        days_of_week: days_of_week || [],
+        priority: priority || 'media',
+        active: true,
+        created_by: user.id,
+        created_at: new Date()
+      };
+      mockRoutines.push(newRoutine);
+      return res.json(newRoutine);
+    }
+    try {
+      const result = await pool.query(`
+        INSERT INTO routines (title, category, assigned_to, days_of_week, priority, created_by)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING *
+      `, [title, category, assigned_to || null, days_of_week, priority || 'media', user.id]);
+      res.json(result.rows[0]);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Erro ao criar rotina' });
+    }
+  });
+
+  // Update Routine
+  app.put('/api/routines/:id', authenticateToken, async (req, res) => {
+    const { id } = req.params;
+    const { active, title, category, assigned_to, days_of_week, priority } = req.body;
+    if (!process.env.DATABASE_URL) {
+      const routine = mockRoutines.find(r => r.id === parseInt(id));
+      if (!routine) return res.status(404).json({ error: 'Rotina não encontrada' });
+      if (active !== undefined) routine.active = active;
+      if (title !== undefined) routine.title = title;
+      if (category !== undefined) routine.category = category;
+      routine.assigned_to = assigned_to || null;
+      if (days_of_week !== undefined) routine.days_of_week = days_of_week;
+      if (priority !== undefined) routine.priority = priority;
+      return res.json(routine);
+    }
+    try {
+      const result = await pool.query(`
+        UPDATE routines 
+        SET active = COALESCE($1, active),
+            title = COALESCE($2, title),
+            category = COALESCE($3, category),
+            assigned_to = $4,
+            days_of_week = COALESCE($5, days_of_week),
+            priority = COALESCE($6, priority)
+        WHERE id = $7 RETURNING *
+      `, [active === undefined ? null : active, title || null, category || null, assigned_to || null, days_of_week || null, priority || null, id]);
+      res.json(result.rows[0]);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Erro ao atualizar rotina' });
+    }
+  });
+
+  // Delete Routine
+  app.delete('/api/routines/:id', authenticateToken, async (req, res) => {
+    const { id } = req.params;
+    if (!process.env.DATABASE_URL) {
+      mockRoutines = mockRoutines.filter(r => r.id !== parseInt(id));
+      mockRoutineCompletions = mockRoutineCompletions.filter(rc => rc.routine_id !== parseInt(id));
+      return res.json({ success: true });
+    }
+    try {
+      await pool.query('DELETE FROM routines WHERE id = $1', [id]);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: 'Erro ao deletar rotina' });
+    }
+  });
+
+  // Get Routine Completions
+  app.get('/api/routine_completions', authenticateToken, async (req, res) => {
+    if (!process.env.DATABASE_URL) return res.json(mockRoutineCompletions);
+    try {
+      const result = await pool.query('SELECT * FROM routine_completions');
+      res.json(result.rows);
+    } catch (err) {
+      res.status(500).json({ error: 'Erro ao buscar conclusões de rotina' });
+    }
+  });
+
+  // Complete/Incomplete Routine
+  app.post('/api/routines/:id/complete', authenticateToken, async (req, res) => {
+    const { id } = req.params;
+    const { completion_date } = req.body;
+    const user = (req as any).user;
+    if (!process.env.DATABASE_URL) {
+      const existing = mockRoutineCompletions.find(rc => rc.routine_id === parseInt(id) && rc.completion_date === completion_date);
+      if (existing) return res.json(existing);
+      const newCompletion = {
+        id: mockRoutineCompletions.length + 1,
+        routine_id: parseInt(id),
+        completion_date,
+        completed_by: user.id,
+        completed_at: new Date()
+      };
+      mockRoutineCompletions.push(newCompletion);
+      return res.json(newCompletion);
+    }
+    try {
+      const result = await pool.query(`
+        INSERT INTO routine_completions (routine_id, completion_date, completed_by)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (routine_id, completion_date) DO UPDATE SET completed_by = EXCLUDED.completed_by
+        RETURNING *
+      `, [id, completion_date, user.id]);
+      res.json(result.rows[0]);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Erro ao completar rotina' });
+    }
+  });
+
+  // Uncomplete Routine
+  app.delete('/api/routines/:id/complete', authenticateToken, async (req, res) => {
+    const { id } = req.params;
+    const { completion_date } = req.body;
+    if (!process.env.DATABASE_URL) {
+      mockRoutineCompletions = mockRoutineCompletions.filter(rc => !(rc.routine_id === parseInt(id) && rc.completion_date === completion_date));
+      return res.json({ success: true });
+    }
+    try {
+      await pool.query(`
+        DELETE FROM routine_completions 
+        WHERE routine_id = $1 AND completion_date = $2
+      `, [id, completion_date]);
+      res.json({ success: true });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Erro ao desfazer conclusão de rotina' });
     }
   });
 
