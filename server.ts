@@ -49,6 +49,13 @@ async function startServer() {
   });
 
   // API Routes
+  app.use('/api', (req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Surrogate-Control', 'no-store');
+    next();
+  });
   
   // Login
   app.post('/api/auth/login', async (req, res) => {
@@ -202,9 +209,17 @@ async function startServer() {
       }
       
       const result = await pool.query(`
-        UPDATE tasks SET title = $1, description = $2, category = $3, assigned_to = $4, priority = $5, due_date = $6, status = $7
+        UPDATE tasks SET 
+          title = COALESCE($1, title), 
+          description = COALESCE($2, description), 
+          category = COALESCE($3, category), 
+          assigned_to = COALESCE($4, assigned_to), 
+          priority = COALESCE($5, priority), 
+          due_date = COALESCE($6, due_date), 
+          status = COALESCE($7, status),
+          completed_at = CASE WHEN $7 = 'pendente' THEN NULL ELSE completed_at END
         WHERE id = $8 RETURNING *
-      `, [title, description, category, assigned_to, priority, due_date, status, id]);
+      `, [title || null, description === undefined ? null : description, category || null, assigned_to === undefined ? null : assigned_to, priority || null, due_date === undefined ? null : due_date, status || null, id]);
       res.json(result.rows[0]);
     } catch (err) {
       console.error(err);
@@ -223,6 +238,7 @@ async function startServer() {
       await pool.query('DELETE FROM tasks WHERE id = $1', [id]);
       res.json({ success: true });
     } catch (err) {
+      console.error('Delete Task Error:', err);
       res.status(500).json({ error: 'Erro ao deletar tarefa' });
     }
   });
@@ -317,6 +333,7 @@ async function startServer() {
       await pool.query('DELETE FROM routines WHERE id = $1', [id]);
       res.json({ success: true });
     } catch (err) {
+      console.error('Delete Routine Error:', err);
       res.status(500).json({ error: 'Erro ao deletar rotina' });
     }
   });
@@ -365,7 +382,7 @@ async function startServer() {
   });
 
   // Uncomplete Routine
-  app.delete('/api/routines/:id/complete', authenticateToken, async (req, res) => {
+  app.post('/api/routines/:id/uncomplete', authenticateToken, async (req, res) => {
     const { id } = req.params;
     const { completion_date } = req.body;
     if (!process.env.DATABASE_URL) {

@@ -88,67 +88,121 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
   const [taskType, setTaskType] = useState<'routine' | 'specific'>('routine');
   const [selectedDays, setSelectedDays] = useState<number[]>([]);
 
+  // Toast / error alert states
+  const [toast, setToast] = useState<{ message: string; type: 'error' | 'success' } | null>(null);
+
+  const showToast = (message: string, type: 'error' | 'success' = 'error') => {
+    setToast({ message, type });
+  };
+
+  // Auto dismiss toast
+  useEffect(() => {
+    if (toast) {
+      const timer = setTimeout(() => setToast(null), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [toast]);
+
   useEffect(() => {
     Promise.all([
-      fetch('/api/tasks').then(r => r.json()),
-      fetch('/api/routines').then(r => r.json()),
-      fetch('/api/routine_completions').then(r => r.json())
+      fetch(`/api/tasks?t=${Date.now()}`).then(r => r.json()),
+      fetch(`/api/routines?t=${Date.now()}`).then(r => r.json()),
+      fetch(`/api/routine_completions?t=${Date.now()}`).then(r => r.json())
     ]).then(([tasksData, routinesData, completionsData]) => {
       if (Array.isArray(tasksData)) setTasks(tasksData);
       if (Array.isArray(routinesData)) setRoutines(routinesData);
       if (Array.isArray(completionsData)) setRoutineCompletions(completionsData);
-    }).catch(err => console.error("Erro ao carregar dados:", err));
+    }).catch(err => {
+      console.error("Erro ao carregar dados:", err);
+      showToast("Não foi possível carregar os dados. Recarregue a página.");
+    });
   }, [refreshKey]);
 
   // Handle tasks actions
   const toggleTask = async (task: Task) => {
     const isCompleting = task.status !== 'concluida';
-    await fetch(`/api/tasks/${task.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...task, status: isCompleting ? 'concluida' : 'pendente' })
-    });
-    setRefreshKey(k => k + 1);
+    try {
+      const response = await fetch(`/api/tasks/${task.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...task, status: isCompleting ? 'concluida' : 'pendente' })
+      });
+      if (!response.ok) {
+        throw new Error('Erro ao atualizar status da tarefa');
+      }
+      setRefreshKey(k => k + 1);
+    } catch (err) {
+      console.error(err);
+      showToast('Não foi possível concluir, tenta de novo');
+    }
   };
 
   const deleteTask = async (taskId: number) => {
-    await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' });
-    setRefreshKey(k => k + 1);
+    try {
+      const response = await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' });
+      if (!response.ok) {
+        throw new Error('Erro ao deletar tarefa');
+      }
+      setRefreshKey(k => k + 1);
+    } catch (err) {
+      console.error(err);
+      showToast('Erro ao excluir tarefa, tenta de novo');
+    }
   };
 
   // Handle routines actions
   const toggleRoutine = async (routine: Routine, dateStr: string) => {
-    const isCompleted = routineCompletions.some(c => c.routine_id === routine.id && c.completion_date === dateStr);
-    const endpoint = `/api/routines/${routine.id}/complete`;
+    const isCompleted = routineCompletions.some(c => c.routine_id === routine.id && (c.completion_date || '').substring(0, 10) === dateStr);
     
-    if (isCompleted) {
-      await fetch(endpoint, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ completion_date: dateStr })
-      });
-    } else {
-      await fetch(endpoint, {
+    try {
+      const endpoint = isCompleted 
+        ? `/api/routines/${routine.id}/uncomplete` 
+        : `/api/routines/${routine.id}/complete`;
+        
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ completion_date: dateStr })
       });
+      
+      if (!response.ok) {
+        throw new Error('Erro ao atualizar rotina');
+      }
+      setRefreshKey(k => k + 1);
+    } catch (err) {
+      console.error(err);
+      showToast('Não foi possível concluir, tenta de novo');
     }
-    setRefreshKey(k => k + 1);
   };
 
   const toggleRoutineActive = async (routine: Routine) => {
-    await fetch(`/api/routines/${routine.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ active: !routine.active })
-    });
-    setRefreshKey(k => k + 1);
+    try {
+      const response = await fetch(`/api/routines/${routine.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active: !routine.active })
+      });
+      if (!response.ok) {
+        throw new Error('Erro ao atualizar rotina');
+      }
+      setRefreshKey(k => k + 1);
+    } catch (err) {
+      console.error(err);
+      showToast('Erro ao atualizar rotina, tenta de novo');
+    }
   };
 
   const deleteRoutine = async (routineId: number) => {
-    await fetch(`/api/routines/${routineId}`, { method: 'DELETE' });
-    setRefreshKey(k => k + 1);
+    try {
+      const response = await fetch(`/api/routines/${routineId}`, { method: 'DELETE' });
+      if (!response.ok) {
+        throw new Error('Erro ao deletar rotina');
+      }
+      setRefreshKey(k => k + 1);
+    } catch (err) {
+      console.error(err);
+      showToast('Erro ao excluir rotina, tenta de novo');
+    }
   };
 
   // Dates for today calculation
@@ -160,7 +214,7 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
   const todayRoutinesUnified = routines
     .filter(r => r.active && r.days_of_week.includes(todayDayOfWeek))
     .map(r => {
-      const isCompleted = routineCompletions.some(c => c.routine_id === r.id && c.completion_date === todayStr);
+      const isCompleted = routineCompletions.some(c => c.routine_id === r.id && (c.completion_date || '').substring(0, 10) === todayStr);
       return {
         key: `routine-${r.id}-${todayStr}`,
         type: 'routine' as const,
@@ -225,7 +279,7 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
     return completedDate >= startOfThisWeek && completedDate <= endOfThisWeek;
   });
 
-  const completedRoutinesThisWeek = routineCompletions.filter(c => isDateInThisWeek(c.completion_date));
+  const completedRoutinesThisWeek = routineCompletions.filter(c => isDateInThisWeek((c.completion_date || '').substring(0, 10)));
 
   // Count completions
   const henriqueTasksCompleted = completedTasksThisWeek.filter(t => t.assigned_to === 1).length;
@@ -268,7 +322,7 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
     const activeRoutinesForDate = routines
       .filter(r => r.active && r.days_of_week.includes(dayOfWeek))
       .map(r => {
-        const isCompleted = routineCompletions.some(c => c.routine_id === r.id && c.completion_date === dateStr);
+        const isCompleted = routineCompletions.some(c => c.routine_id === r.id && (c.completion_date || '').substring(0, 10) === dateStr);
         return {
           key: `routine-${r.id}-${dateStr}`,
           type: 'routine' as const,
@@ -892,44 +946,54 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
             
             <form onSubmit={async (e) => {
               e.preventDefault();
-              const formData = new FormData(e.currentTarget);
-              const title = formData.get('title') as string;
-              const category = formData.get('category') as string;
-              const assigned_val = formData.get('assigned_to') as string;
-              const assigned_to = assigned_val ? parseInt(assigned_val) : null;
-              const priority = formData.get('priority') as string;
+              try {
+                const formData = new FormData(e.currentTarget);
+                const title = formData.get('title') as string;
+                const category = formData.get('category') as string;
+                const assigned_val = formData.get('assigned_to') as string;
+                const assigned_to = assigned_val ? parseInt(assigned_val) : null;
+                const priority = formData.get('priority') as string;
 
-              if (taskType === 'routine') {
-                // Routines creation
-                await fetch('/api/routines', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    title,
-                    category,
-                    assigned_to,
-                    priority,
-                    days_of_week: selectedDays.length > 0 ? selectedDays : [todayDayOfWeek] // Fallback to today if none selected
-                  })
-                });
-              } else {
-                // Tasks creation
-                const due_date = formData.get('due_date') || todayStr;
-                await fetch('/api/tasks', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    title,
-                    category,
-                    assigned_to,
-                    priority,
-                    due_date
-                  })
-                });
+                let response;
+                if (taskType === 'routine') {
+                  // Routines creation
+                  response = await fetch('/api/routines', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      title,
+                      category,
+                      assigned_to,
+                      priority,
+                      days_of_week: selectedDays.length > 0 ? selectedDays : [todayDayOfWeek] // Fallback to today if none selected
+                    })
+                  });
+                } else {
+                  // Tasks creation
+                  const due_date = formData.get('due_date') || todayStr;
+                  response = await fetch('/api/tasks', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      title,
+                      category,
+                      assigned_to,
+                      priority,
+                      due_date
+                    })
+                  });
+                }
+
+                if (!response.ok) {
+                  throw new Error('Erro ao salvar item');
+                }
+
+                setShowNewTask(false);
+                setRefreshKey(k => k + 1);
+              } catch (err) {
+                console.error(err);
+                showToast('Não foi possível criar o item, tenta de novo');
               }
-
-              setShowNewTask(false);
-              setRefreshKey(k => k + 1);
             }} className="flex flex-col gap-4">
               
               <div className="flex flex-col gap-1.5">
@@ -1030,6 +1094,30 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
           </motion.div>
         </div>
       )}
+
+      {/* Toast Notification */}
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 50 }}
+            className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 w-full max-w-[350px] px-4"
+          >
+            <div className={cn(
+              "p-4 rounded-2xl shadow-xl flex items-center gap-3 border text-sm font-semibold backdrop-blur-md",
+              toast.type === 'error' 
+                ? "bg-red-500/10 border-red-500/20 text-red-600" 
+                : "bg-sage-green/10 border-sage-green/20 text-sage-green"
+            )}>
+              <span className="flex-shrink-0">
+                {toast.type === 'error' ? '⚠️' : '✅'}
+              </span>
+              <p className="flex-1 leading-normal">{toast.message}</p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -1108,7 +1196,10 @@ function UnifiedItemCard({
         )}
       >
         <button 
-          onClick={onToggle} 
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggle();
+          }}
           className={cn(
             "flex-shrink-0 transition-all active:scale-75", 
             item.isCompleted ? "text-sage-green" : "text-base-text/15 hover:text-base-text/35"
