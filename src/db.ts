@@ -3,6 +3,9 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+// Configure pg to return DATE columns (OID 1082) as raw YYYY-MM-DD strings
+pg.types.setTypeParser(1082, (val) => val);
+
 const { Pool } = pg;
 
 // Create a new pool
@@ -74,6 +77,30 @@ export const setupDatabase = async () => {
         completed_at TIMESTAMP DEFAULT NOW(),
         UNIQUE (routine_id, completion_date)
       );
+    `);
+
+    // Add status and note columns to routine_completions and tasks
+    await client.query(`
+      ALTER TABLE routine_completions ADD COLUMN IF NOT EXISTS status VARCHAR(10) DEFAULT 'completed';
+      ALTER TABLE routine_completions ADD COLUMN IF NOT EXISTS note TEXT;
+      ALTER TABLE tasks ADD COLUMN IF NOT EXISTS note TEXT;
+    `);
+
+    // Create push_subscriptions table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
+        endpoint TEXT NOT NULL,
+        p256dh TEXT NOT NULL,
+        auth TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+
+    // Clean up orphaned routine completions where the parent routine was deleted
+    await client.query(`
+      DELETE FROM routine_completions WHERE routine_id NOT IN (SELECT id FROM routines);
     `);
 
     // Seed data

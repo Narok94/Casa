@@ -1,6 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { User, Task, Routine, RoutineCompletion } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
+import confetti from 'canvas-confetti';
+import { registerServiceWorkerAndSubscribe, checkPushSubscriptionStatus } from '../pushRegistration';
 import { 
   CheckCircle2, 
   Circle, 
@@ -16,7 +18,10 @@ import {
   ToggleLeft, 
   ToggleRight, 
   Filter,
-  User2
+  User2,
+  Pencil,
+  FileText,
+  CircleOff
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { 
@@ -76,8 +81,23 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
   const [showNewTask, setShowNewTask] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
+  // New States
+  const [todayFilter, setTodayFilter] = useState<'minhas' | 'todas'>('minhas');
+  const [isPushSubscribed, setIsPushSubscribed] = useState(false);
+  const [noteEditingItemId, setNoteEditingItemId] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState<string>('');
+  const [undoItem, setUndoItem] = useState<{ message: string; action: () => void } | null>(null);
+  const [pendingDeletions, setPendingDeletions] = useState<number[]>([]);
+  const [pendingRoutineDeletions, setPendingRoutineDeletions] = useState<number[]>([]);
+  const prevPendingCount = useRef<number | null>(null);
+
+  // Check push subscription on load
+  useEffect(() => {
+    checkPushSubscriptionStatus().then(setIsPushSubscribed);
+  }, []);
+
   // Filters for complete list
-  const [filterPerson, setFilterPerson] = useState<string>('todos');
+  const [filterPerson, setFilterPerson] = useState<string>(user.id.toString());
   const [filterCategory, setFilterCategory] = useState<string>('todas');
 
   // Calendar states
@@ -87,6 +107,7 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
   // Form states inside the modal (declared here to persist/manage cleanly)
   const [taskType, setTaskType] = useState<'routine' | 'specific'>('routine');
   const [selectedDays, setSelectedDays] = useState<number[]>([]);
+  const [formPriority, setFormPriority] = useState<'baixa' | 'media' | 'alta'>('media');
 
   // Toast / error alert states
   const [toast, setToast] = useState<{ message: string; type: 'error' | 'success' } | null>(null);
@@ -102,6 +123,33 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
       return () => clearTimeout(timer);
     }
   }, [toast]);
+
+  // Auto dismiss undo banner
+  useEffect(() => {
+    if (undoItem) {
+      const timer = setTimeout(() => setUndoItem(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [undoItem]);
+
+  const handleTogglePush = async () => {
+    try {
+      if (isPushSubscribed) {
+        showToast("Você já está inscrito para receber lembretes!", "success");
+        return;
+      }
+      const res = await registerServiceWorkerAndSubscribe();
+      if (res.success) {
+        setIsPushSubscribed(true);
+        showToast(res.message, "success");
+      } else {
+        showToast(res.message, "error");
+      }
+    } catch (err) {
+      console.error(err);
+      showToast("Falha ao ativar notificações de push");
+    }
+  };
 
   useEffect(() => {
     Promise.all([
@@ -119,7 +167,7 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
   }, [refreshKey]);
 
   // Handle tasks actions
-  const toggleTask = async (task: Task) => {
+  const toggleTask = async (task: Task, silent: boolean = false) => {
     const isCompleting = task.status !== 'concluida';
     try {
       const response = await fetch(`/api/tasks/${task.id}`, {
@@ -131,44 +179,104 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
         throw new Error('Erro ao atualizar status da tarefa');
       }
       setRefreshKey(k => k + 1);
+
+      if (!silent) {
+        setUndoItem({
+          message: isCompleting ? `Tarefa "${task.title}" concluída!` : `Tarefa "${task.title}" reaberta.`,
+          action: () => {
+            toggleTask(task, true);
+            setUndoItem(null);
+          }
+        });
+      }
     } catch (err) {
       console.error(err);
       showToast('Não foi possível concluir, tenta de novo');
     }
   };
 
-  const deleteTask = async (taskId: number) => {
-    try {
-      const response = await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' });
-      if (!response.ok) {
-        throw new Error('Erro ao deletar tarefa');
+  const deleteTask = (taskId: number) => {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
+    setPendingDeletions(prev => [...prev, taskId]);
+    
+    setUndoItem({
+      message: `Tarefa "${task.title}" excluída.`,
+      action: () => {
+        setPendingDeletions(prev => prev.filter(id => id !== taskId));
+        setUndoItem(null);
       }
-      setRefreshKey(k => k + 1);
-    } catch (err) {
-      console.error(err);
-      showToast('Erro ao excluir tarefa, tenta de novo');
-    }
+    });
+
+    setTimeout(async () => {
+      setPendingDeletions(currentPending => {
+        if (currentPending.includes(taskId)) {
+          fetch(`/api/tasks/${taskId}`, { method: 'DELETE' })
+            .then(res => {
+              if (res.ok) {
+                setRefreshKey(k => k + 1);
+              }
+            })
+            .catch(err => console.error(err));
+          return currentPending.filter(id => id !== taskId);
+        }
+        return currentPending;
+      });
+    }, 5000);
   };
 
   // Handle routines actions
-  const toggleRoutine = async (routine: Routine, dateStr: string) => {
-    const isCompleted = routineCompletions.some(c => c.routine_id === routine.id && (c.completion_date || '').substring(0, 10) === dateStr);
+  const toggleRoutine = async (routine: Routine, dateStr: string, status: 'completed' | 'skipped' = 'completed', silent: boolean = false) => {
+    const completion = routineCompletions.find(c => c.routine_id === routine.id && (c.completion_date || '').substring(0, 10) === dateStr);
     
+    const isCompleted = !!completion;
+    const isSameStatus = completion?.status === status || (!completion?.status && status === 'completed');
+
     try {
-      const endpoint = isCompleted 
-        ? `/api/routines/${routine.id}/uncomplete` 
-        : `/api/routines/${routine.id}/complete`;
+      if (isCompleted && isSameStatus) {
+        // Toggle OFF (uncomplete)
+        const response = await fetch(`/api/routines/${routine.id}/uncomplete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ completion_date: dateStr })
+        });
+        if (!response.ok) {
+          throw new Error('Erro ao desmarcar rotina');
+        }
+        setRefreshKey(k => k + 1);
         
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ completion_date: dateStr })
-      });
-      
-      if (!response.ok) {
-        throw new Error('Erro ao atualizar rotina');
+        if (!silent) {
+          setUndoItem({
+            message: `Rotina "${routine.title}" reaberta.`,
+            action: () => {
+              toggleRoutine(routine, dateStr, status, true);
+              setUndoItem(null);
+            }
+          });
+        }
+      } else {
+        // Toggle ON (or switch status)
+        const response = await fetch(`/api/routines/${routine.id}/complete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ completion_date: dateStr, status })
+        });
+        if (!response.ok) {
+          throw new Error('Erro ao atualizar rotina');
+        }
+        setRefreshKey(k => k + 1);
+        
+        if (!silent) {
+          const actionText = status === 'skipped' ? 'pulada hoje.' : 'concluída!';
+          setUndoItem({
+            message: `Rotina "${routine.title}" ${actionText}`,
+            action: () => {
+              toggleRoutine(routine, dateStr, status, true);
+              setUndoItem(null);
+            }
+          });
+        }
       }
-      setRefreshKey(k => k + 1);
     } catch (err) {
       console.error(err);
       showToast('Não foi possível concluir, tenta de novo');
@@ -192,17 +300,34 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
     }
   };
 
-  const deleteRoutine = async (routineId: number) => {
-    try {
-      const response = await fetch(`/api/routines/${routineId}`, { method: 'DELETE' });
-      if (!response.ok) {
-        throw new Error('Erro ao deletar rotina');
+  const deleteRoutine = (routineId: number) => {
+    const routine = routines.find(r => r.id === routineId);
+    if (!routine) return;
+    setPendingRoutineDeletions(prev => [...prev, routineId]);
+    
+    setUndoItem({
+      message: `Rotina "${routine.title}" excluída.`,
+      action: () => {
+        setPendingRoutineDeletions(prev => prev.filter(id => id !== routineId));
+        setUndoItem(null);
       }
-      setRefreshKey(k => k + 1);
-    } catch (err) {
-      console.error(err);
-      showToast('Erro ao excluir rotina, tenta de novo');
-    }
+    });
+
+    setTimeout(async () => {
+      setPendingRoutineDeletions(currentPending => {
+        if (currentPending.includes(routineId)) {
+          fetch(`/api/routines/${routineId}`, { method: 'DELETE' })
+            .then(res => {
+              if (res.ok) {
+                setRefreshKey(k => k + 1);
+              }
+            })
+            .catch(err => console.error(err));
+          return currentPending.filter(id => id !== routineId);
+        }
+        return currentPending;
+      });
+    }, 5000);
   };
 
   // Dates for today calculation
@@ -210,11 +335,93 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
   const todayDayOfWeek = todayDate.getDay();
   const todayStr = getLocalDateString(todayDate);
 
-  // Generate unified lists
+  // Helper to calculate routine streak backwards from today
+  const calculateStreak = (routineId: number) => {
+    let streak = 0;
+    const routine = routines.find(r => r.id === routineId);
+    if (!routine || !routine.days_of_week || routine.days_of_week.length === 0) return 0;
+    
+    const completionMap = new Map<string, RoutineCompletion>();
+    routineCompletions.forEach(c => {
+      if (c.routine_id === routineId) {
+        const dateKey = (c.completion_date || '').substring(0, 10);
+        completionMap.set(dateKey, c);
+      }
+    });
+    
+    // Check backwards from today for up to 365 days
+    for (let i = 0; i < 365; i++) {
+      const checkDate = new Date();
+      checkDate.setDate(checkDate.getDate() - i);
+      const dayOfWeek = checkDate.getDay();
+      
+      if (routine.days_of_week.includes(dayOfWeek)) {
+        const dateStr = getLocalDateString(checkDate);
+        const compl = completionMap.get(dateStr);
+        
+        if (compl) {
+          if (compl.status === 'skipped') {
+            // Skipped does not break the streak and does not increment it
+            continue;
+          } else {
+            // Completed! Increment and keep searching backwards
+            streak++;
+          }
+        } else {
+          // If it is today, they still have time to complete it, so don't break the streak yet
+          const today = new Date();
+          const isCheckToday = checkDate.getDate() === today.getDate() &&
+                               checkDate.getMonth() === today.getMonth() &&
+                               checkDate.getFullYear() === today.getFullYear();
+          if (isCheckToday) {
+            continue;
+          } else {
+            // Past scheduled day was missed! This breaks the streak
+            break;
+          }
+        }
+      }
+    }
+    return streak;
+  };
+
+  // Helper to save a note for task or routine
+  const handleSaveNote = async (item: { type: 'routine' | 'task', id: number, raw: any }, noteText: string) => {
+    try {
+      if (item.type === 'routine') {
+        const completion = routineCompletions.find(c => c.routine_id === item.id && (c.completion_date || '').substring(0, 10) === todayStr);
+        const status = completion?.status || 'completed';
+        
+        const response = await fetch(`/api/routines/${item.id}/complete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ completion_date: todayStr, status, note: noteText })
+        });
+        if (!response.ok) throw new Error('Erro ao salvar nota da rotina');
+      } else {
+        const response = await fetch(`/api/tasks/${item.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...item.raw, note: noteText })
+        });
+        if (!response.ok) throw new Error('Erro ao salvar nota da tarefa');
+      }
+      setNoteEditingItemId(null);
+      setRefreshKey(k => k + 1);
+      showToast('Nota salva!', 'success');
+    } catch (err) {
+      console.error(err);
+      showToast('Erro ao salvar nota');
+    }
+  };
+
+  // Generate unified lists (excluding pending deletions)
   const todayRoutinesUnified = routines
-    .filter(r => r.active && r.days_of_week.includes(todayDayOfWeek))
+    .filter(r => r.active && r.days_of_week.includes(todayDayOfWeek) && !pendingRoutineDeletions.includes(r.id))
     .map(r => {
-      const isCompleted = routineCompletions.some(c => c.routine_id === r.id && (c.completion_date || '').substring(0, 10) === todayStr);
+      const completion = routineCompletions.find(c => c.routine_id === r.id && (c.completion_date || '').substring(0, 10) === todayStr);
+      const isCompleted = completion?.status === 'completed' || (!completion?.status && !!completion);
+      const isSkipped = completion?.status === 'skipped';
       return {
         key: `routine-${r.id}-${todayStr}`,
         type: 'routine' as const,
@@ -224,12 +431,14 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
         assigned_to: r.assigned_to,
         priority: r.priority,
         isCompleted,
+        isSkipped,
+        note: completion?.note || null,
         raw: r
       };
     });
 
   const todayTasksUnified = tasks
-    .filter(t => parseDueDate(t.due_date) === todayStr)
+    .filter(t => parseDueDate(t.due_date) === todayStr && !pendingDeletions.includes(t.id))
     .map(t => ({
       key: `task-${t.id}`,
       type: 'task' as const,
@@ -239,26 +448,53 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
       assigned_to: t.assigned_to,
       priority: t.priority,
       isCompleted: t.status === 'concluida',
+      isSkipped: false,
+      note: t.note || null,
       raw: t
     }));
 
-  const combinedTodayItems = [...todayRoutinesUnified, ...todayTasksUnified];
+  const combinedTodayItems = [...todayRoutinesUnified, ...todayTasksUnified].filter(item => {
+    return item.assigned_to === user.id || item.assigned_to === null;
+  });
+
+  // Confetti effect when checking off the last item of the day
+  const pendingCount = combinedTodayItems.filter(item => !item.isCompleted && !item.isSkipped).length;
+  useEffect(() => {
+    if (combinedTodayItems.length > 0) {
+      if (prevPendingCount.current !== null && prevPendingCount.current > 0 && pendingCount === 0) {
+        confetti({
+          particleCount: 120,
+          spread: 80,
+          origin: { y: 0.6 }
+        });
+      }
+      prevPendingCount.current = pendingCount;
+    } else {
+      prevPendingCount.current = null;
+    }
+  }, [pendingCount, combinedTodayItems.length]);
 
   // Filters application for Complete List (Aba Tarefas)
-  const applyFilters = (item: { category: string, assigned_to: number | null }) => {
+  const applyFilters = (item: { id: number, category: string, assigned_to: number | null }) => {
     if (filterCategory !== 'todas' && item.category !== filterCategory) return false;
     if (filterPerson !== 'todos') {
       if (filterPerson === 'nos_dois') {
         if (item.assigned_to !== null) return false;
       } else {
-        if (item.assigned_to !== parseInt(filterPerson)) return false;
+        const targetPersonId = parseInt(filterPerson);
+        if (item.assigned_to !== targetPersonId && item.assigned_to !== null) return false;
       }
     }
     return true;
   };
 
-  const filteredRoutines = routines.filter(applyFilters);
-  const filteredTasks = tasks.filter(applyFilters);
+  const filteredRoutines = routines
+    .filter(r => !pendingRoutineDeletions.includes(r.id))
+    .filter(applyFilters);
+    
+  const filteredTasks = tasks
+    .filter(t => !pendingDeletions.includes(t.id))
+    .filter(applyFilters);
 
   // History calculation (Weekly placar)
   const startOfThisWeek = startOfWeek(todayDate, { weekStartsOn: 1 });
@@ -283,12 +519,12 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
 
   // Count completions
   const henriqueTasksCompleted = completedTasksThisWeek.filter(t => t.assigned_to === 1).length;
-  const henriqueRoutinesCompleted = completedRoutinesThisWeek.filter(c => c.completed_by === 1).length;
+  const henriqueRoutinesCompleted = completedRoutinesThisWeek.filter(c => c.completed_by === 1 && c.status !== 'skipped').length;
 
   const jessicaTasksCompleted = completedTasksThisWeek.filter(t => t.assigned_to === 2).length;
-  const jessicaRoutinesCompleted = completedRoutinesThisWeek.filter(c => c.completed_by === 2).length;
+  const jessicaRoutinesCompleted = completedRoutinesThisWeek.filter(c => c.completed_by === 2 && c.status !== 'skipped').length;
 
-  const totalCompletionsThisWeek = completedTasksThisWeek.length + completedRoutinesThisWeek.length;
+  const totalCompletionsThisWeek = completedTasksThisWeek.length + completedRoutinesThisWeek.filter(c => c.status !== 'skipped').length;
 
   // Calendar rendering helper
   const getDaysInMonthGrid = (date: Date) => {
@@ -320,9 +556,11 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
     const dayOfWeek = date.getDay();
     
     const activeRoutinesForDate = routines
-      .filter(r => r.active && r.days_of_week.includes(dayOfWeek))
+      .filter(r => r.active && r.days_of_week.includes(dayOfWeek) && !pendingRoutineDeletions.includes(r.id))
       .map(r => {
-        const isCompleted = routineCompletions.some(c => c.routine_id === r.id && (c.completion_date || '').substring(0, 10) === dateStr);
+        const completion = routineCompletions.find(c => c.routine_id === r.id && (c.completion_date || '').substring(0, 10) === dateStr);
+        const isCompleted = completion?.status === 'completed' || (!completion?.status && !!completion);
+        const isSkipped = completion?.status === 'skipped';
         return {
           key: `routine-${r.id}-${dateStr}`,
           type: 'routine' as const,
@@ -332,12 +570,14 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
           assigned_to: r.assigned_to,
           priority: r.priority,
           isCompleted,
+          isSkipped,
+          note: completion?.note || null,
           raw: r
         };
       });
       
     const tasksForDate = tasks
-      .filter(t => parseDueDate(t.due_date) === dateStr)
+      .filter(t => parseDueDate(t.due_date) === dateStr && !pendingDeletions.includes(t.id))
       .map(t => ({
         key: `task-${t.id}-${dateStr}`,
         type: 'task' as const,
@@ -347,6 +587,8 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
         assigned_to: t.assigned_to,
         priority: t.priority,
         isCompleted: t.status === 'concluida',
+        isSkipped: false,
+        note: t.note || null,
         raw: t
       }));
       
@@ -379,10 +621,17 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
     <div className="flex flex-col min-h-screen bg-base-bg pb-[calc(80px+env(safe-area-inset-bottom))] w-full max-w-[414px] mx-auto relative shadow-2xl">
       <header className="p-6 pb-2 flex justify-between items-center pt-[calc(1.5rem+env(safe-area-inset-top))]">
         <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}>
-          <h1 className="text-2xl font-display font-medium">Olá, {user.name} 👋</h1>
+          <h1 className="text-2xl font-display font-medium">
+            {(() => {
+              const hour = new Date().getHours();
+              if (hour >= 5 && hour < 12) return `Bom dia, ${user.name} 🌅`;
+              if (hour >= 12 && hour < 18) return `Boa tarde, ${user.name} ☀️`;
+              return `Boa noite, ${user.name} 🌙`;
+            })()}
+          </h1>
           <p className="text-base-text/60 capitalize font-medium">{format(new Date(), "EEEE, d 'de' MMMM", { locale: ptBR })}</p>
         </motion.div>
-        <button onClick={onLogout} className="p-2.5 bg-white border border-black/5 rounded-full shadow-sm text-base-text/50 hover:text-base-text transition-all active:scale-90">
+        <button onClick={onLogout} className="p-2.5 bg-card-bg border border-card-border rounded-full shadow-sm text-base-text/50 hover:text-base-text transition-all active:scale-90">
           <LogOut size={18} />
         </button>
       </header>
@@ -394,7 +643,7 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col gap-6">
             
             {/* General progress banner */}
-            <section className="bg-white p-5 rounded-3xl border border-black/5 shadow-sm">
+            <section className="bg-card-bg p-5 rounded-3xl border border-card-border shadow-sm">
               <div className="flex justify-between items-center mb-3">
                 <h3 className="font-semibold text-base-text">Resumo da Semana</h3>
                 <span className="text-xs font-semibold text-sage-green bg-sage-green/10 px-2.5 py-1 rounded-full">
@@ -436,7 +685,9 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
                       key={item.key} 
                       item={item} 
                       onToggle={() => handleToggleUnifiedItem(item, todayStr)} 
+                      onSkip={() => item.type === 'routine' ? toggleRoutine(item.raw, todayStr, 'skipped') : undefined}
                       onDelete={() => handleDeleteUnifiedItem(item)} 
+                      onEditNote={(noteText) => handleSaveNote(item, noteText)}
                     />
                   ))
                 )}
@@ -490,9 +741,9 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
                       className="p-2 bg-base-bg rounded-xl text-xs font-medium outline-none border-none focus:ring-1 focus:ring-sage-green"
                     >
                       <option value="todos">Todos</option>
-                      <option value="1">Henrique</option>
-                      <option value="2">Jessica</option>
-                      <option value="nos_dois">Nós dois</option>
+                      <option value="1">Henrique (+ Nós dois)</option>
+                      <option value="2">Jessica (+ Nós dois)</option>
+                      <option value="nos_dois">Só Nós dois</option>
                     </select>
                   </div>
                   <div className="flex flex-col gap-1">
@@ -565,6 +816,16 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
                                     🔥 Alta
                                   </span>
                                 )}
+                                {routine.priority === 'media' && (
+                                  <span className="bg-amber-500/10 text-amber-600 px-1.5 py-0.5 rounded flex items-center gap-0.5 text-[9px]">
+                                    ⚡ Média
+                                  </span>
+                                )}
+                                {routine.priority === 'baixa' && (
+                                  <span className="bg-slate-500/10 text-slate-600 px-1.5 py-0.5 rounded flex items-center gap-0.5 text-[9px]">
+                                    ❄️ Baixa
+                                  </span>
+                                )}
                               </div>
                             </div>
                             
@@ -620,10 +881,12 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
                             assigned_to: t.assigned_to,
                             priority: t.priority,
                             isCompleted: t.status === 'concluida',
+                            note: t.note || null,
                             raw: t
                           }}
                           onToggle={() => toggleTask(t)}
                           onDelete={() => deleteTask(t.id)}
+                          onEditNote={(noteText) => handleSaveNote({ type: 'task', id: t.id, raw: t }, noteText)}
                         />
                       ))
                     )}
@@ -771,7 +1034,9 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
                           key={item.key}
                           item={item}
                           onToggle={() => handleToggleUnifiedItem(item, getLocalDateString(selectedCalendarDate))}
+                          onSkip={() => item.type === 'routine' ? toggleRoutine(item.raw, getLocalDateString(selectedCalendarDate), 'skipped') : undefined}
                           onDelete={() => handleDeleteUnifiedItem(item)}
+                          onEditNote={(noteText) => handleSaveNote(item, noteText)}
                         />
                       ))
                     )}
@@ -829,6 +1094,47 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
               </div>
             </div>
 
+            {/* Streaks (Active sequences) */}
+            <div className="bg-card-bg p-5 rounded-3xl border border-card-border shadow-sm flex flex-col gap-3">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-2xl">🔥</span>
+                <div>
+                  <h3 className="font-bold text-base-text">Sequências Ativas (Streaks)</h3>
+                  <p className="text-xs text-base-text/40">Consecutivas nos dias programados (pulado não quebra)</p>
+                </div>
+              </div>
+              <div className="flex flex-col gap-3 mt-1">
+                {routines.filter(r => r.active).length === 0 ? (
+                  <p className="text-xs text-base-text/50 text-center py-2">Nenhuma rotina ativa cadastrada.</p>
+                ) : (
+                  routines.filter(r => r.active).map(routine => {
+                    const streakCount = calculateStreak(routine.id);
+                    return (
+                      <div key={`streak-${routine.id}`} className="flex items-center justify-between p-3 rounded-2xl bg-base-bg border border-card-border">
+                        <div className="overflow-hidden flex-1 mr-2">
+                          <h4 className="font-semibold text-xs text-base-text truncate">{routine.title}</h4>
+                          <span className="text-[10px] text-base-text/50 font-medium">
+                            {(categoryEmojis[routine.category] || '') + ' ' + routine.category}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          {streakCount > 0 ? (
+                            <span className="bg-orange-500/10 text-orange-600 dark:text-orange-400 font-extrabold text-xs px-2.5 py-1 rounded-full flex items-center gap-1">
+                              🔥 {streakCount}x
+                            </span>
+                          ) : (
+                            <span className="bg-slate-500/10 text-slate-500 dark:text-slate-400 font-bold text-xs px-2.5 py-1 rounded-full flex items-center gap-1">
+                              ❄️ 0x
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
             {/* List of completions */}
             <div className="flex flex-col gap-3 mt-2">
               <h3 className="font-display font-semibold text-sm text-base-text/70 uppercase tracking-wider px-1 flex items-center gap-1.5">⏱️ Atividades Recentes</h3>
@@ -843,31 +1149,81 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
                 ) : (
                   <div className="flex flex-col gap-3">
                     {/* Render completed tasks */}
-                    {completedTasksThisWeek.map(t => (
-                      <div key={`compl-task-${t.id}`} className="bg-white p-4 rounded-3xl border border-black/5 shadow-sm opacity-65 flex items-center gap-4">
-                        <CheckCircle2 size={24} className="text-sage-green flex-shrink-0" />
-                        <div className="flex-1 overflow-hidden">
-                          <h4 className="font-medium text-sm text-base-text line-through truncate">{t.title}</h4>
-                          <span className="text-[10px] bg-black/5 text-base-text/50 px-1.5 py-0.5 rounded font-bold mt-1 inline-block">
-                            Avulsa · {(categoryEmojis[t.category] || '') + ' ' + t.category}
-                          </span>
+                    {completedTasksThisWeek.map(t => {
+                      let dateLabel = '';
+                      if (t.completed_at) {
+                        try {
+                          dateLabel = format(new Date(t.completed_at), "eee, dd/MM", { locale: ptBR });
+                        } catch {
+                          dateLabel = '';
+                        }
+                      }
+                      return (
+                        <div key={`compl-task-${t.id}`} className="bg-white p-4 rounded-3xl border border-black/5 shadow-sm opacity-65 flex items-center justify-between gap-4">
+                          <div className="flex items-center gap-3 overflow-hidden">
+                            <CheckCircle2 size={24} className="text-sage-green flex-shrink-0" />
+                            <div className="overflow-hidden">
+                              <h4 className="font-medium text-sm text-base-text line-through truncate">{t.title}</h4>
+                              <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                <span className="text-[10px] bg-black/5 text-base-text/50 px-1.5 py-0.5 rounded font-bold">
+                                  Avulsa · {(categoryEmojis[t.category] || '') + ' ' + t.category}
+                                </span>
+                                {dateLabel && (
+                                  <span className="text-[10px] text-base-text/40 font-medium">
+                                    • {dateLabel}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          {t.assigned_to === 1 && (
+                            <span className="w-6 h-6 rounded-full bg-[#5F7A61]/10 text-[#5F7A61] flex items-center justify-center font-bold text-xs flex-shrink-0">H</span>
+                          )}
+                          {t.assigned_to === 2 && (
+                            <span className="w-6 h-6 rounded-full bg-[#A96B54]/10 text-[#A96B54] flex items-center justify-center font-bold text-xs flex-shrink-0">J</span>
+                          )}
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
 
                     {/* Render completed routines */}
                     {completedRoutinesThisWeek.map(c => {
                       const associatedRoutine = routines.find(r => r.id === c.routine_id);
                       if (!associatedRoutine) return null;
+                      
+                      let dateLabel = '';
+                      const rawDate = (c.completion_date || '').substring(0, 10);
+                      if (rawDate) {
+                        try {
+                          dateLabel = format(new Date(rawDate + 'T12:00:00'), "eee, dd/MM", { locale: ptBR });
+                        } catch {
+                          dateLabel = '';
+                        }
+                      }
                       return (
-                        <div key={`compl-rout-${c.id}`} className="bg-white p-4 rounded-3xl border border-black/5 shadow-sm opacity-65 flex items-center gap-4">
-                          <CheckCircle2 size={24} className="text-sage-green flex-shrink-0" />
-                          <div className="flex-1 overflow-hidden">
-                            <h4 className="font-medium text-sm text-base-text line-through truncate">{associatedRoutine.title}</h4>
-                            <span className="text-[10px] bg-sage-green/10 text-sage-green px-1.5 py-0.5 rounded font-bold mt-1 inline-block">
-                              Rotina · {(categoryEmojis[associatedRoutine.category] || '') + ' ' + associatedRoutine.category}
-                            </span>
+                        <div key={`compl-rout-${c.id}`} className="bg-white p-4 rounded-3xl border border-black/5 shadow-sm opacity-65 flex items-center justify-between gap-4">
+                          <div className="flex items-center gap-3 overflow-hidden">
+                            <CheckCircle2 size={24} className="text-sage-green flex-shrink-0" />
+                            <div className="overflow-hidden">
+                              <h4 className="font-medium text-sm text-base-text line-through truncate">{associatedRoutine.title}</h4>
+                              <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                <span className="text-[10px] bg-sage-green/10 text-sage-green px-1.5 py-0.5 rounded font-bold">
+                                  Rotina · {(categoryEmojis[associatedRoutine.category] || '') + ' ' + associatedRoutine.category}
+                                </span>
+                                {dateLabel && (
+                                  <span className="text-[10px] text-base-text/40 font-medium">
+                                    • {dateLabel}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
                           </div>
+                          {c.completed_by === 1 && (
+                            <span className="w-6 h-6 rounded-full bg-[#5F7A61]/10 text-[#5F7A61] flex items-center justify-center font-bold text-xs flex-shrink-0">H</span>
+                          )}
+                          {c.completed_by === 2 && (
+                            <span className="w-6 h-6 rounded-full bg-[#A96B54]/10 text-[#A96B54] flex items-center justify-center font-bold text-xs flex-shrink-0">J</span>
+                          )}
                         </div>
                       );
                     })}
@@ -892,6 +1248,7 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
               onClick={() => {
                 setTaskType('routine');
                 setSelectedDays([]);
+                setFormPriority('media');
                 setShowNewTask(true);
               }}
               className="bg-sage-green text-white w-12 h-12 rounded-full shadow-lg flex items-center justify-center transform active:scale-90 transition-all hover:bg-[#4E644F]"
@@ -1018,11 +1375,45 @@ export default function Dashboard({ user, onLogout }: { user: User, onLogout: ()
 
                 <div className="flex flex-col gap-1.5">
                   <label className="text-[11px] font-bold text-base-text/50 uppercase tracking-wider">Prioridade</label>
-                  <select name="priority" className="p-3 bg-base-bg rounded-2xl w-full text-xs font-semibold outline-none border-none">
-                    <option value="media">Média</option>
-                    <option value="alta">Alta</option>
-                    <option value="baixa">Baixa</option>
-                  </select>
+                  <input type="hidden" name="priority" value={formPriority} />
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setFormPriority('baixa')}
+                      className={cn(
+                        "py-2.5 px-2 rounded-xl text-[11px] font-bold transition-all border flex items-center justify-center gap-1",
+                        formPriority === 'baixa'
+                          ? "bg-slate-500/10 text-slate-600 border-slate-500/35 shadow-xs"
+                          : "bg-base-bg text-base-text/40 border-black/5 hover:bg-black/5"
+                      )}
+                    >
+                      ❄️ Baixa
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFormPriority('media')}
+                      className={cn(
+                        "py-2.5 px-2 rounded-xl text-[11px] font-bold transition-all border flex items-center justify-center gap-1",
+                        formPriority === 'media'
+                          ? "bg-amber-500/10 text-amber-600 border-amber-500/35 shadow-xs"
+                          : "bg-base-bg text-base-text/40 border-black/5 hover:bg-black/5"
+                      )}
+                    >
+                      ⚡ Média
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFormPriority('alta')}
+                      className={cn(
+                        "py-2.5 px-2 rounded-xl text-[11px] font-bold transition-all border flex items-center justify-center gap-1",
+                        formPriority === 'alta'
+                          ? "bg-red-500/10 text-red-500 border-red-500/35 shadow-xs"
+                          : "bg-base-bg text-base-text/40 border-black/5 hover:bg-black/5"
+                      )}
+                    >
+                      🔥 Alta
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -1134,7 +1525,9 @@ function NavButton({ icon, label, active, onClick }: { icon: React.ReactNode, la
 function UnifiedItemCard({ 
   item, 
   onToggle, 
-  onDelete 
+  onSkip,
+  onDelete,
+  onEditNote
 }: { 
   item: { 
     type: 'routine' | 'task', 
@@ -1144,26 +1537,33 @@ function UnifiedItemCard({
     assigned_to: number | null, 
     priority: string, 
     isCompleted: boolean,
+    isSkipped?: boolean,
+    note?: string | null,
     raw?: any
   }, 
   onToggle: () => void, 
-  onDelete: () => void 
+  onSkip?: () => void,
+  onDelete: () => void,
+  onEditNote?: (noteText: string) => void
 }) {
+  const [isEditingNote, setIsEditingNote] = useState(false);
+  const [noteText, setNoteText] = useState(item.note || '');
+
   let borderAndBgStyle = '';
   if (item.assigned_to === 1) {
     borderAndBgStyle = cn(
-      'border-l-[6px] border-l-sage-green bg-[#5F7A61]/5 border-y-black/5 border-r-black/5',
-      item.isCompleted ? 'opacity-75' : 'hover:bg-[#5F7A61]/10'
+      'border-l-[6px] border-l-sage-green bg-[#5F7A61]/5 border-y-card-border border-r-card-border',
+      item.isCompleted || item.isSkipped ? 'opacity-75' : 'hover:bg-[#5F7A61]/10'
     );
   } else if (item.assigned_to === 2) {
     borderAndBgStyle = cn(
-      'border-l-[6px] border-l-terracotta bg-[#A96B54]/5 border-y-black/5 border-r-black/5',
-      item.isCompleted ? 'opacity-75' : 'hover:bg-[#A96B54]/10'
+      'border-l-[6px] border-l-terracotta bg-[#A96B54]/5 border-y-card-border border-r-card-border',
+      item.isCompleted || item.isSkipped ? 'opacity-75' : 'hover:bg-[#A96B54]/10'
     );
   } else {
     borderAndBgStyle = cn(
-      'border-l-[6px] border-l-amber-500 bg-amber-500/5 border-y-black/5 border-r-black/5',
-      item.isCompleted ? 'opacity-75' : 'hover:bg-amber-500/10'
+      'border-l-[6px] border-l-amber-500 bg-amber-500/5 border-y-card-border border-r-card-border',
+      item.isCompleted || item.isSkipped ? 'opacity-75' : 'hover:bg-amber-500/10'
     );
   }
 
@@ -1191,7 +1591,7 @@ function UnifiedItemCard({
         }}
         whileTap={{ cursor: "grabbing" }}
         className={cn(
-          "p-4 rounded-[24px] border flex items-center gap-4 transition-colors relative z-10 min-h-[76px] bg-white shadow-sm",
+          "p-4 rounded-[24px] border border-card-border flex items-center gap-4 transition-colors relative z-10 min-h-[76px] bg-card-bg shadow-sm",
           borderAndBgStyle
         )}
       >
@@ -1202,57 +1602,151 @@ function UnifiedItemCard({
           }}
           className={cn(
             "flex-shrink-0 transition-all active:scale-75", 
-            item.isCompleted ? "text-sage-green" : "text-base-text/15 hover:text-base-text/35"
+            item.isCompleted ? "text-sage-green" : item.isSkipped ? "text-base-text/30" : "text-base-text/15 hover:text-base-text/35"
           )}
         >
-          {item.isCompleted ? <CheckCircle2 size={26} /> : <Circle size={26} />}
+          {item.isCompleted ? (
+            <CheckCircle2 size={26} />
+          ) : item.isSkipped ? (
+            <CircleOff size={26} />
+          ) : (
+            <Circle size={26} />
+          )}
         </button>
 
         <div className="flex-1 overflow-hidden">
-          <h3 className={cn(
-            "font-semibold text-[15px] leading-snug truncate", 
-            item.isCompleted ? "line-through text-base-text/45" : "text-base-text"
-          )}>
-            {item.title}
-          </h3>
+          {isEditingNote ? (
+            <div className="flex flex-col gap-2 w-full mt-1" onClick={e => e.stopPropagation()}>
+              <input 
+                value={noteText}
+                onChange={e => setNoteText(e.target.value)}
+                placeholder="Escreva um recado rápido..."
+                className="w-full p-2 text-xs bg-base-bg rounded-xl border border-card-border text-base-text outline-none focus:ring-1 focus:ring-sage-green"
+                autoFocus
+              />
+              <div className="flex gap-2 justify-end">
+                <button 
+                  onClick={() => setIsEditingNote(false)}
+                  className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-base-bg text-base-text/60"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  onClick={() => {
+                    onEditNote?.(noteText);
+                    setIsEditingNote(false);
+                  }}
+                  className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-sage-green text-white"
+                >
+                  Salvar
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <h3 className={cn(
+                "font-semibold text-[15px] leading-snug truncate", 
+                item.isCompleted ? "line-through text-base-text/45" : item.isSkipped ? "text-base-text/40 italic" : "text-base-text"
+              )}>
+                {item.title}
+              </h3>
+              
+              {/* Display existing Note */}
+              {item.note && (
+                <div className="mt-1 flex items-center gap-1.5 text-[11px] text-amber-600 dark:text-amber-500 bg-amber-500/5 px-2 py-0.5 rounded-lg border border-amber-500/10 max-w-max">
+                  <FileText size={11} className="flex-shrink-0 text-amber-500" />
+                  <span className="truncate max-w-[220px] font-medium">{item.note}</span>
+                </div>
+              )}
+            </>
+          )}
           
-          <div className="flex flex-wrap gap-1.5 mt-2 text-[9px] font-bold text-base-text/50 items-center">
-            <span className="bg-base-text/5 px-2 py-0.5 rounded-md">{(categoryEmojis[item.category] || '') + ' ' + item.category}</span>
-            
-            {item.type === 'routine' ? (
-              <span className="bg-sage-green/10 text-sage-green px-2 py-0.5 rounded-md">Rotina</span>
-            ) : (
-              <span className="bg-blue-500/10 text-blue-500 px-2 py-0.5 rounded-md">Avulsa</span>
-            )}
+          {!isEditingNote && (
+            <div className="flex flex-wrap gap-1.5 mt-2 text-[9px] font-bold text-base-text/50 items-center">
+              <span className="bg-base-text/5 px-2 py-0.5 rounded-md">{(categoryEmojis[item.category] || '') + ' ' + item.category}</span>
+              
+              {item.type === 'routine' ? (
+                <span className="bg-sage-green/10 text-sage-green px-2 py-0.5 rounded-md">Rotina</span>
+              ) : (
+                <span className="bg-blue-500/10 text-blue-500 px-2 py-0.5 rounded-md">Avulsa</span>
+              )}
 
-            {item.assigned_to === 1 && (
-              <span className="bg-sage-green/5 text-[#5F7A61] px-2 py-0.5 rounded-md">Henrique</span>
-            )}
-            {item.assigned_to === 2 && (
-              <span className="bg-terracotta/5 text-[#A96B54] px-2 py-0.5 rounded-md">Jessica</span>
-            )}
-            {!item.assigned_to && (
-              <span className="bg-black/5 text-base-text/40 px-2 py-0.5 rounded-md">Nós dois</span>
-            )}
+              {item.assigned_to === 1 && (
+                <span className="bg-sage-green/5 text-[#5F7A61] px-2 py-0.5 rounded-md">Henrique</span>
+              )}
+              {item.assigned_to === 2 && (
+                <span className="bg-terracotta/5 text-[#A96B54] px-2 py-0.5 rounded-md">Jessica</span>
+              )}
+              {!item.assigned_to && (
+                <span className="bg-black/5 dark:bg-white/5 text-base-text/40 px-2 py-0.5 rounded-md">Nós dois</span>
+              )}
 
-            {item.priority === 'alta' && (
-              <span className="bg-red-500/10 text-red-500 px-1.5 py-0.5 rounded flex items-center gap-0.5">
-                🔥 Alta
-              </span>
-            )}
-          </div>
+              {item.priority === 'alta' && (
+                <span className="bg-red-500/10 text-red-500 px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                  🔥 Alta
+                </span>
+              )}
+              {item.priority === 'media' && (
+                <span className="bg-amber-500/10 text-amber-600 dark:text-amber-500 px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                  ⚡ Média
+                </span>
+              )}
+              {item.priority === 'baixa' && (
+                <span className="bg-slate-500/10 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                  ❄️ Baixa
+                </span>
+              )}
+
+              {item.isSkipped && (
+                <span className="bg-base-text/10 text-base-text/60 px-1.5 py-0.5 rounded">
+                  🚫 Pulado hoje
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Delete button (explicit, not just swipe) */}
-        <button 
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
-          className="p-2 text-base-text/20 hover:text-red-500 hover:bg-red-50 rounded-full transition-all flex-shrink-0 active:scale-90"
-        >
-          <Trash2 size={18} />
-        </button>
+        {/* Action icons right side */}
+        <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
+          {/* Note edit pencil icon */}
+          {!isEditingNote && (
+            <button 
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsEditingNote(true);
+              }}
+              title="Escrever recado"
+              className="p-1.5 text-base-text/20 hover:text-amber-500 hover:bg-amber-500/10 rounded-full transition-all active:scale-90"
+            >
+              <Pencil size={15} />
+            </button>
+          )}
+
+          {/* Skip today button (only active routines that are neither completed nor skipped) */}
+          {item.type === 'routine' && !item.isCompleted && !item.isSkipped && onSkip && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onSkip();
+              }}
+              title="Pular hoje"
+              className="px-2 py-1 rounded-lg text-[9px] font-extrabold bg-amber-500/15 text-amber-600 dark:text-amber-500 border border-amber-500/20 hover:bg-amber-500/25 transition-all flex items-center gap-0.5 active:scale-90"
+            >
+              <span>Pular</span>
+            </button>
+          )}
+
+          {/* Delete button */}
+          <button 
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+            className="p-1.5 text-base-text/20 hover:text-red-500 hover:bg-red-500/10 rounded-full transition-all flex-shrink-0 active:scale-90"
+          >
+            <Trash2 size={16} />
+          </button>
+        </div>
       </motion.div>
     </div>
   );

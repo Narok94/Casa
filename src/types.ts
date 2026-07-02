@@ -18,6 +18,7 @@ export interface Task {
   created_by: number;
   created_at: string;
   completed_at: string | null;
+  note?: string | null;
 }
 
 export interface Routine {
@@ -38,4 +39,6 @@ export interface RoutineCompletion {
   completion_date: string; // YYYY-MM-DD
   completed_by: number;
   completed_at: string;
+  status?: 'completed' | 'skipped';
+  note?: string | null;
 }

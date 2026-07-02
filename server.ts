@@ -3,6 +3,7 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import cookieParser from 'cookie-parser';
 import jwt from 'jsonwebtoken';
+import webpush from 'web-push';
 import pool, { setupDatabase } from './src/db.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key-for-jwt';
@@ -149,7 +150,7 @@ async function startServer() {
 
   // Create Task
   app.post('/api/tasks', authenticateToken, async (req, res) => {
-    const { title, description, category, assigned_to, priority, due_date } = req.body;
+    const { title, description, category, assigned_to, priority, due_date, note } = req.body;
     const user = (req as any).user;
     if (!process.env.DATABASE_URL) {
       const newTask = {
@@ -161,6 +162,7 @@ async function startServer() {
         status: 'pendente',
         priority: priority || 'media',
         due_date: due_date || null,
+        note: note || null,
         created_by: user.id,
         created_at: new Date()
       };
@@ -169,10 +171,10 @@ async function startServer() {
     }
     try {
       const result = await pool.query(`
-        INSERT INTO tasks (title, description, category, assigned_to, priority, due_date, created_by)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        INSERT INTO tasks (title, description, category, assigned_to, priority, due_date, note, created_by)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING *
-      `, [title, description || '', category, assigned_to || null, priority || 'media', due_date || null, user.id]);
+      `, [title, description || '', category, assigned_to || null, priority || 'media', due_date || null, note || null, user.id]);
       res.json(result.rows[0]);
     } catch (err) {
       console.error(err);
@@ -183,7 +185,7 @@ async function startServer() {
   // Update Task
   app.put('/api/tasks/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
-    const { status, title, description, category, assigned_to, priority, due_date } = req.body;
+    const { status, title, description, category, assigned_to, priority, due_date, note } = req.body;
     if (!process.env.DATABASE_URL) {
       const task = mockTasks.find(t => t.id === parseInt(id));
       if (!task) return res.status(404).json({ error: 'Tarefa não encontrada' });
@@ -198,6 +200,7 @@ async function startServer() {
       task.assigned_to = assigned_to || null;
       if (priority !== undefined) task.priority = priority;
       if (due_date !== undefined) task.due_date = due_date;
+      if (note !== undefined) task.note = note;
       return res.json(task);
     }
     try {
@@ -217,9 +220,10 @@ async function startServer() {
           priority = COALESCE($5, priority), 
           due_date = COALESCE($6, due_date), 
           status = COALESCE($7, status),
-          completed_at = CASE WHEN $7 = 'pendente' THEN NULL ELSE completed_at END
-        WHERE id = $8 RETURNING *
-      `, [title || null, description === undefined ? null : description, category || null, assigned_to === undefined ? null : assigned_to, priority || null, due_date === undefined ? null : due_date, status || null, id]);
+          completed_at = CASE WHEN $7 = 'pendente' THEN NULL ELSE completed_at END,
+          note = COALESCE($8, note)
+        WHERE id = $9 RETURNING *
+      `, [title || null, description === undefined ? null : description, category || null, assigned_to === undefined ? null : assigned_to, priority || null, due_date === undefined ? null : due_date, status || null, note === undefined ? null : note, id]);
       res.json(result.rows[0]);
     } catch (err) {
       console.error(err);
@@ -352,28 +356,40 @@ async function startServer() {
   // Complete/Incomplete Routine
   app.post('/api/routines/:id/complete', authenticateToken, async (req, res) => {
     const { id } = req.params;
-    const { completion_date } = req.body;
+    const { completion_date, status, note } = req.body;
     const user = (req as any).user;
     if (!process.env.DATABASE_URL) {
       const existing = mockRoutineCompletions.find(rc => rc.routine_id === parseInt(id) && rc.completion_date === completion_date);
-      if (existing) return res.json(existing);
+      if (existing) {
+        existing.completed_by = user.id;
+        existing.status = status || 'completed';
+        existing.note = note !== undefined ? note : null;
+        return res.json(existing);
+      }
       const newCompletion = {
         id: mockRoutineCompletions.length + 1,
         routine_id: parseInt(id),
         completion_date,
         completed_by: user.id,
-        completed_at: new Date()
+        completed_at: new Date(),
+        status: status || 'completed',
+        note: note !== undefined ? note : null
       };
       mockRoutineCompletions.push(newCompletion);
       return res.json(newCompletion);
     }
     try {
       const result = await pool.query(`
-        INSERT INTO routine_completions (routine_id, completion_date, completed_by)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (routine_id, completion_date) DO UPDATE SET completed_by = EXCLUDED.completed_by
+        INSERT INTO routine_completions (routine_id, completion_date, completed_by, status, note)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (routine_id, completion_date) 
+        DO UPDATE SET 
+          completed_by = EXCLUDED.completed_by,
+          status = EXCLUDED.status,
+          note = EXCLUDED.note,
+          completed_at = NOW()
         RETURNING *
-      `, [id, completion_date, user.id]);
+      `, [id, completion_date, user.id, status || 'completed', note !== undefined ? note : null]);
       res.json(result.rows[0]);
     } catch (err) {
       console.error(err);
@@ -399,6 +415,156 @@ async function startServer() {
       console.error(err);
       res.status(500).json({ error: 'Erro ao desfazer conclusão de rotina' });
     }
+  });
+
+  // --- WEB PUSH & NOTIFICATIONS ---
+
+  const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || 'BJtAV4Yb8o3QhhKS_v53gXfxWb1lePXa4xFi5N9khDWkvdsk7p81tm26sm2rkaGr-PChChYj2NcCimmhieiWzhA';
+  const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || 'yFv9visECgG1EWMkM0hOqB2y8vHH0lFh47L8kYQ-2uc';
+  const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:Hollyood.caribe@gmail.com';
+
+  webpush.setVapidDetails(
+    VAPID_SUBJECT,
+    VAPID_PUBLIC_KEY,
+    VAPID_PRIVATE_KEY
+  );
+
+  async function sendPushNotification(user_id: number, title: string, body: string) {
+    if (!process.env.DATABASE_URL) {
+      console.log(`[Push Notification Simulation] To user_id ${user_id}: "${title}" - "${body}"`);
+      return;
+    }
+    try {
+      const result = await pool.query('SELECT * FROM push_subscriptions WHERE user_id = $1', [user_id]);
+      const subscriptions = result.rows;
+      console.log(`Enviando ${subscriptions.length} notificações de push para o usuário ${user_id}`);
+      for (const sub of subscriptions) {
+        const pushSubscription = {
+          endpoint: sub.endpoint,
+          keys: {
+            p256dh: sub.p256dh,
+            auth: sub.auth
+          }
+        };
+        const payload = JSON.stringify({ title, body });
+        try {
+          await webpush.sendNotification(pushSubscription, payload);
+        } catch (pushErr: any) {
+          console.error(`Falha ao enviar push para endpoint ${sub.endpoint}:`, pushErr);
+          if (pushErr.statusCode === 410 || pushErr.statusCode === 404) {
+            // Expired or unsubscribed
+            await pool.query('DELETE FROM push_subscriptions WHERE id = $1', [sub.id]);
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`Erro ao buscar assinaturas de push para usuário ${user_id}:`, err);
+    }
+  }
+
+  async function sendDailyReminders() {
+    const today = new Date();
+    const dayOfWeek = today.getDay();
+    // Get YYYY-MM-DD in local time
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    const todayStr = `${year}-${month}-${day}`;
+
+    if (!process.env.DATABASE_URL) {
+      console.log("Simulating daily reminders for mock data...");
+      const users = [
+        { id: 1, name: 'Henrique' },
+        { id: 2, name: 'Jessica' }
+      ];
+      for (const u of users) {
+        const routineCount = mockRoutines.filter(r => r.active && r.days_of_week.includes(dayOfWeek) && (r.assigned_to === u.id || r.assigned_to === null)).length;
+        const taskCount = mockTasks.filter(t => t.status === 'pendente' && t.due_date === todayStr && (t.assigned_to === u.id || t.assigned_to === null)).length;
+        const total = routineCount + taskCount;
+        if (total > 0) {
+          console.log(`[Push Notification Simulation] ${u.name}, você tem ${total} tarefas para hoje!`);
+        }
+      }
+      return;
+    }
+
+    try {
+      const usersRes = await pool.query('SELECT id, name FROM users');
+      const users = usersRes.rows;
+
+      for (const u of users) {
+        // 1. Count pending tasks assigned to user or "Nós dois" (null) for today
+        const tasksRes = await pool.query(`
+          SELECT COUNT(*)::integer FROM tasks
+          WHERE status = 'pendente'
+            AND (assigned_to = $1 OR assigned_to IS NULL)
+            AND due_date = $2
+        `, [u.id, todayStr]);
+        const tasksCount = tasksRes.rows[0].count;
+
+        // 2. Count active routines for today that have NOT been completed/skipped yet
+        const routinesRes = await pool.query(`
+          SELECT COUNT(*)::integer FROM routines r
+          WHERE r.active = true
+            AND $1 = ANY(r.days_of_week)
+            AND (r.assigned_to = $2 OR r.assigned_to IS NULL)
+            AND NOT EXISTS (
+              SELECT 1 FROM routine_completions rc
+              WHERE rc.routine_id = r.id
+                AND rc.completion_date = $3
+            )
+        `, [dayOfWeek, u.id, todayStr]);
+        const routinesCount = routinesRes.rows[0].count;
+
+        const total = tasksCount + routinesCount;
+        if (total > 0) {
+          const msg = total === 1 
+            ? `Você tem 1 tarefa pendente hoje.` 
+            : `Você tem ${total} tarefas pendentes hoje.`;
+          await sendPushNotification(u.id, `Lar & Harmonia 🏡`, `Olá, ${u.name}! ${msg}`);
+        }
+      }
+    } catch (err) {
+      console.error('Error sending daily reminders:', err);
+    }
+  }
+
+  // Push Subscription Endpoint
+  app.post('/api/push/subscribe', authenticateToken, async (req, res) => {
+    const { subscription } = req.body;
+    const user = (req as any).user;
+    if (!subscription || !subscription.endpoint) {
+      return res.status(400).json({ error: 'Inscrição inválida' });
+    }
+    const endpoint = subscription.endpoint;
+    const p256dh = subscription.keys?.p256dh || '';
+    const auth = subscription.keys?.auth || '';
+    
+    if (!process.env.DATABASE_URL) {
+      return res.json({ success: true, message: 'Inscrição simulada salva com sucesso!' });
+    }
+    try {
+      await pool.query('DELETE FROM push_subscriptions WHERE endpoint = $1', [endpoint]);
+      await pool.query(`
+        INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth)
+        VALUES ($1, $2, $3, $4)
+      `, [user.id, endpoint, p256dh, auth]);
+      res.json({ success: true });
+    } catch (err) {
+      console.error('Erro ao salvar inscrição de push:', err);
+      res.status(500).json({ error: 'Erro ao salvar inscrição de push' });
+    }
+  });
+
+  // Cron Reminders Trigger (can be GET or POST)
+  app.get('/api/cron/reminders', async (req, res) => {
+    await sendDailyReminders();
+    res.json({ success: true, message: 'Lembretes diários disparados.' });
+  });
+
+  app.post('/api/cron/reminders', async (req, res) => {
+    await sendDailyReminders();
+    res.json({ success: true, message: 'Lembretes diários disparados.' });
   });
 
   // Vite middleware for development
